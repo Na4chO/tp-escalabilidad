@@ -21,6 +21,9 @@ profile.cov
 # Dependency directories (remove the comment below to include it)
 # vendor/
 
+# Local build output
+src/bin/
+
 # Go workspace file
 go.work
 go.work.sum
@@ -29,5 +32,5 @@ go.work.sum
 .env
 
 # Editor/IDE
-# .idea/
+.idea/
 # .vscode/

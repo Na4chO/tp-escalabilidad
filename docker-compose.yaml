@@ -1,0 +1,44 @@
+services:
+  server:
+    build:
+      context: ./src
+      dockerfile: server/Dockerfile
+    container_name: server
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=5678
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+    ports:
+      - "5678:5678"
+
+  client_0:
+    build:
+      context: ./src
+      dockerfile: client/Dockerfile
+    container_name: client_0
+    depends_on:
+      - server
+    environment:
+      - SERVER_HOST=server
+      - SERVER_PORT=5678
+
+  rabbitmq:
+    build:
+      context: ./src/rabbitmq
+      dockerfile: Dockerfile
+    container_name: rabbitmq
+    environment:
+      - RABBITMQ_LOG_LEVELS=error
+    healthcheck:
+      interval: 5s
+      retries: 10
+      start_period: 50s
+      test: rabbitmq-diagnostics check_port_connectivity
+      timeout: 3s
+    ports:
+      - 5672:5672
+      - 15672:15672
