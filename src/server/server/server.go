@@ -8,11 +8,11 @@ import (
 	"sync/atomic"
 	"syscall"
 
+	"github.com/Na4chO/tp-escalabilidad/common/external"
 	"github.com/Na4chO/tp-escalabilidad/common/middleware"
 	articleHandler "github.com/Na4chO/tp-escalabilidad/server/articlehandler"
 	"github.com/Na4chO/tp-escalabilidad/server/clientregistry"
 	"github.com/Na4chO/tp-escalabilidad/server/config"
-	"github.com/Na4chO/tp-escalabilidad/server/external"
 )
 
 type Server struct {
