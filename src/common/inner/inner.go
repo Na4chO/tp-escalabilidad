@@ -1,27 +1,5 @@
 package inner
 
-type Article struct {
-	Abstract           string `json:"abstract"`
-	AdditionalEntities string `json:"additionalEntities"`
-	DateCreated        string `json:"dateCreated"`
-	DateModified       string `json:"dateModified"`
-	Description        string `json:"description"`
-	Event              string `json:"event"`
-	Identifier         uint32 `json:"identifier"`
-	Image              string `json:"image"`
-	InLanguage         string `json:"inLanguage"`
-	Infoboxes          string `json:"infoboxes"`
-	IsPartOf           string `json:"isPartOf"`
-	License            string `json:"license"`
-	MainEntity         string `json:"mainEntity"`
-	Name               string `json:"name"`
-	References         string `json:"references"`
-	Sections           string `json:"sections"`
-	Tables             string `json:"tables"`
-	Url                string `json:"url"`
-	Version            string `json:"version"`
-}
-
 type Metadata struct {
 	Url          string `json:"url"`
 	DateModified string `json:"dateModified"`

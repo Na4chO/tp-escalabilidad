@@ -9,6 +9,9 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/Na4chO/tp-escalabilidad/common/article"
+	"github.com/Na4chO/tp-escalabilidad/common/external"
 )
 
 const connectionAttempts = 3
@@ -78,7 +81,7 @@ func (client *Client) sendArticles() error {
 
 	for _, path := range files {
 		slog.Info("Reading file", "path", path)
-		if err := readParquetFile(path, batchSize, client.running.Load, handleBatch); err != nil {
+		if err := readParquetFile(path, client.running.Load, client.handleArticle); err != nil {
 			return err
 		}
 	}
@@ -91,15 +94,8 @@ func (client *Client) sendArticles() error {
 	return nil
 }
 
-func handleBatch(batch []Article) error {
-	var totalArticles, totalBytes int
-
-	payload := SerializeBatch(batch)
-	// TODO: armar el mensaje con este payload y escribirlo en client.conn
-	totalArticles += len(batch)
-	totalBytes += len(payload)
-	slog.Debug("Batch serialized", "articles", len(batch), "bytes", len(payload))
-	return nil
+func (client *Client) handleArticle(a article.Article) error {
+	return external.WriteArticle(client.conn, a)
 }
 
 func (client *Client) handleSignals() {
