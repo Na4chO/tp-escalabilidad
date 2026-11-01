@@ -1,27 +1,69 @@
 package ArticleHandler
 
-import "github.com/Na4chO/tp-escalabilidad/common/middleware"
+import (
+	"fmt"
+	"strconv"
 
-var nextClientID uint64 = 0
+	"github.com/Na4chO/tp-escalabilidad/common"
+	"github.com/Na4chO/tp-escalabilidad/common/article"
+	"github.com/Na4chO/tp-escalabilidad/common/inner"
+)
 
 type ArticleHandler struct {
-	clientID uint64
+	metadataQueue *common.PacketQueue[inner.Metadata]
+	abstractQueue *common.PacketQueue[inner.Abstract]
 }
 
-func NewArticleHandler() ArticleHandler {
-	clientID := nextClientID
-	nextClientID++
-	return ArticleHandler{clientID: clientID}
+func NewArticleHandler(metadataQueue *common.PacketQueue[inner.Metadata], abstractQueue *common.PacketQueue[inner.Abstract]) *ArticleHandler {
+	return &ArticleHandler{metadataQueue, abstractQueue}
 }
 
-func (articleHandler *ArticleHandler) SerializeArticleMessage(raw string) (*middleware.Message, error) {
-	return nil, nil
+func (articleHandler *ArticleHandler) HandleArticle(clientID uint32, a article.Article) error {
+	dateModified := strconv.FormatInt(a.DateModified, 10)
+	inLanguage, ok := getLang(a.InLanguage)
+	if !ok {
+		return fmt.Errorf("language %s not recognized", a.InLanguage)
+	}
+	imageURL := getImg(a.Image)
+
+	metadata := inner.Metadata{
+		Url:          a.Url,
+		DateModified: dateModified,
+		InLanguage:   inLanguage,
+		Name:         a.Name,
+		ImageUrl:     imageURL,
+		Sections:     a.Sections,
+	}
+	abstract := inner.Abstract{
+		Abstract:     a.Abstract,
+		Url:          a.Url,
+		DateModified: dateModified,
+		InLanguage:   inLanguage,
+	}
+	if err := articleHandler.metadataQueue.SendData(clientID, metadata); err != nil {
+		return err
+	}
+	return articleHandler.abstractQueue.SendData(clientID, abstract)
 }
 
-func (articleHandler *ArticleHandler) SerializeEofMessage(raw string) (*middleware.Message, error) {
-	return nil, nil
+func (articleHandler *ArticleHandler) HandleEOF(clientID uint32) error {
+	if err := articleHandler.metadataQueue.SendEOF(clientID); err != nil {
+		return err
+	}
+	return articleHandler.abstractQueue.SendEOF(clientID)
 }
 
-func (articleHandler *ArticleHandler) DeserializeResultMessage(message *middleware.Message) (string, error) {
-	return "", nil
+func getLang(value map[string]any) (string, bool) {
+	identifier, ok := value["identifier"].(string)
+	if !ok || identifier == "" {
+		return "", false
+	}
+	return identifier, true
+}
+
+func getImg(value map[string]any) string {
+	if url, ok := value["content_url"].(string); ok {
+		return url
+	}
+	return ""
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/Na4chO/tp-escalabilidad/common/article"
 	"github.com/Na4chO/tp-escalabilidad/common/external/safeio"
+	"github.com/Na4chO/tp-escalabilidad/common/inner"
 )
 
 type MsgType uint8
@@ -14,6 +15,7 @@ type MsgType uint8
 const (
 	Article MsgType = iota + 1
 	EndOfFile
+	QueryResult
 )
 
 func WriteArticle(writer io.Writer, a article.Article) error {
@@ -67,4 +69,8 @@ func readBody(reader io.Reader, body any) error {
 		return fmt.Errorf("decoding message: %w", err)
 	}
 	return nil
+}
+
+func WriteQueryResult(writer io.Writer, result inner.QueryResult) error {
+	return writeMessage(writer, QueryResult, result)
 }
