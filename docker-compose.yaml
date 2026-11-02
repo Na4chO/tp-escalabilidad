@@ -15,6 +15,20 @@ services:
     ports:
       - "5678:5678"
 
+  frequency_collector:
+    build:
+      context: ./src
+      dockerfile: frequency_collector/Dockerfile
+    container_name: frequency_collector
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+    ports:
+      - "5678:5678"
+
   client_0:
     build:
       context: ./src

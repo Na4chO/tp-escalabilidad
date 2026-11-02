@@ -8,6 +8,7 @@ import (
 type Packet[T any] struct {
 	ClientID uint32 `json:"client_id"`
 	IsEof    bool   `json:"is_eof"`
+	Total    uint32 `json:"total"`
 	Payload  T      `json:"payload,omitzero"`
 }
 

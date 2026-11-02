@@ -6,7 +6,8 @@ import (
 )
 
 type PacketQueue[T any] struct {
-	mw middleware.Middleware
+	mw        middleware.Middleware
+	totalSent uint32
 }
 
 func NewPacketQueue[T any](queueName string, settings middleware.ConnSettings) (*PacketQueue[T], error) {
@@ -14,7 +15,7 @@ func NewPacketQueue[T any](queueName string, settings middleware.ConnSettings) (
 	if err != nil {
 		return nil, err
 	}
-	return &PacketQueue[T]{queue}, nil
+	return &PacketQueue[T]{mw: queue}, nil
 }
 func (q *PacketQueue[T]) Send(packet external.Packet[T]) error {
 	data, err := packet.Encode()
@@ -25,11 +26,15 @@ func (q *PacketQueue[T]) Send(packet external.Packet[T]) error {
 }
 
 func (q *PacketQueue[T]) SendData(clientID uint32, payload T) error {
-	return q.Send(external.Packet[T]{ClientID: clientID, Payload: payload})
+	if err := q.Send(external.Packet[T]{ClientID: clientID, Payload: payload}); err != nil {
+		return err
+	}
+	q.totalSent++
+	return nil
 }
 
 func (q *PacketQueue[T]) SendEOF(clientID uint32) error {
-	return q.Send(external.Packet[T]{ClientID: clientID, IsEof: true})
+	return q.Send(external.Packet[T]{ClientID: clientID, IsEof: true, Total: q.totalSent})
 }
 
 func (q *PacketQueue[T]) StartConsuming(callback func(packet external.Packet[T], ack func(), nack func())) error {
