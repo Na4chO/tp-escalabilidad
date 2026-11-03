@@ -44,6 +44,7 @@ type AbstractWordCount struct {
 type PeerCount struct {
 	Instance string `json:"instance"`
 	Count    uint32 `json:"count"`
+	Finished bool   `json:"finished"`
 }
 
 type Average struct {
