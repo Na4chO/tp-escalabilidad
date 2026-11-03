@@ -41,18 +41,18 @@ func NewCounter(connSettings middleware.ConnSettings) (*Counter, error) {
 		return nil, fmt.Errorf("creating counts directory: %w", err)
 	}
 
-	input, err := common.NewPacketQueue[inner.AbstractWordCount](inner.AbstractsFrom2021Queue, connSettings)
+	input, err := common.NewPacketQueue[inner.AbstractWordCount]("abstracts_from_2021", connSettings)
 	if err != nil {
 		return nil, fmt.Errorf("creating input queue: %w", err)
 	}
 
-	syncExchange, err := middleware.CreateExchangeMiddleware(inner.WordCounterSyncExchange, []string{inner.WordCounterSyncKey}, connSettings)
+	syncExchange, err := middleware.CreateExchangeMiddleware("abstract_word_counter_sync", []string{"sync"}, connSettings)
 	if err != nil {
 		input.Close()
 		return nil, fmt.Errorf("creating sync exchange: %w", err)
 	}
 
-	averages, err := middleware.CreateExchangeMiddleware(inner.AveragesExchange, []string{inner.AveragesKey}, connSettings)
+	averages, err := middleware.CreateExchangeMiddleware("averages", []string{"average"}, connSettings)
 	if err != nil {
 		input.Close()
 		syncExchange.Close()

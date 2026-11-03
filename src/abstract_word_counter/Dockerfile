@@ -5,10 +5,10 @@ WORKDIR /build
 
 COPY go.mod go.sum ./
 COPY common ./common
-COPY abstractwordcounter ./abstractwordcounter
+COPY abstract_word_counter ./abstract_word_counter
 
-RUN CGO_ENABLED=0 GOOS=linux go build -o bin/abstractwordcounter ./abstractwordcounter
+RUN CGO_ENABLED=0 GOOS=linux go build -o bin/abstract_word_counter ./abstract_word_counter
 
 FROM busybox:latest
-COPY --from=builder /build/bin/abstractwordcounter /abstractwordcounter
-ENTRYPOINT ["./abstractwordcounter"]
+COPY --from=builder /build/bin/abstract_word_counter /abstract_word_counter
+ENTRYPOINT ["./abstract_word_counter"]
