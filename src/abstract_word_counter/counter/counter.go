@@ -43,7 +43,7 @@ func NewCounter(connSettings middleware.ConnSettings) (*Counter, error) {
 		return nil, fmt.Errorf("creating counts directory: %w", err)
 	}
 
-	c := &Counter{countsDir: countsDir, pending: map[uint32]*pending{}}
+	c := &Counter{countsDir: countsDir, pending: map[clientid.ID]*pending{}}
 
 	input, err := common.NewPacketQueue[inner.AbstractWordCount]("abstracts_from_2021", connSettings)
 	if err != nil {
@@ -146,11 +146,11 @@ func (c *Counter) handleAverage(msg middleware.Message, ack func(), nack func())
 	ack()
 }
 
-func (c *Counter) onSynced(clientID uint32) {
+func (c *Counter) onSynced(clientID clientid.ID) {
 	c.filterIfReady(clientID, func(p *pending) { p.synced = true })
 }
 
-func (c *Counter) onFinished(clientID uint32, total uint32) {
+func (c *Counter) onFinished(clientID clientid.ID, total uint32) {
 	err := c.results.Send(external.Packet[inner.QueryResult]{
 		ClientID: clientID,
 		IsEof:    true,
@@ -164,7 +164,7 @@ func (c *Counter) onFinished(clientID uint32, total uint32) {
 	slog.Info("Client finished", "client", clientID, "total", total)
 }
 
-func (c *Counter) filterIfReady(clientID uint32, update func(*pending)) {
+func (c *Counter) filterIfReady(clientID clientid.ID, update func(*pending)) {
 	c.mu.Lock()
 	p := c.pending[clientID]
 	if p == nil {
@@ -183,7 +183,7 @@ func (c *Counter) filterIfReady(clientID uint32, update func(*pending)) {
 	}
 }
 
-func (c *Counter) filter(clientID uint32, average float64) {
+func (c *Counter) filter(clientID clientid.ID, average float64) {
 	if err := c.sendResults(clientID, average); err != nil {
 		slog.Error("While sending results", "client", clientID, "err", err)
 	}

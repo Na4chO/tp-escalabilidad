@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"sync"
 
+	clientid "github.com/Na4chO/tp-escalabilidad/common/client_id"
 	"github.com/Na4chO/tp-escalabilidad/common/external"
 	"github.com/Na4chO/tp-escalabilidad/common/inner"
 	"github.com/Na4chO/tp-escalabilidad/common/middleware"
@@ -12,9 +13,9 @@ import (
 
 const syncKey = "sync"
 
-type SyncedCallback func(clientID uint32)
+type SyncedCallback func(clientID clientid.ID)
 
-type FinishedCallback func(clientID uint32, total uint32)
+type FinishedCallback func(clientID clientid.ID, total uint32)
 
 type Synchronizer struct {
 	instanceID string
@@ -23,13 +24,13 @@ type Synchronizer struct {
 	onFinished FinishedCallback
 
 	mu          sync.Mutex
-	processed   map[uint32]uint32            // own processed count, sent in count messages
-	sent        map[uint32]uint32            // own results sent, sent in finished messages
-	closing     map[uint32]bool              // EOF known, counts are being exchanged
-	totals      map[uint32]uint32            // expected total from the EOF
-	coordinator map[uint32]bool              // sets instance to be coordinator for final EOF
-	peerCounts  map[uint32]map[string]uint32 // last count of each instance, compared to total
-	peerSent    map[uint32]map[string]uint32 // results sent by each instance, summed by coordinator
+	processed   map[clientid.ID]uint32            // own processed count, sent in count messages
+	sent        map[clientid.ID]uint32            // own results sent, sent in finished messages
+	closing     map[clientid.ID]bool              // EOF known, counts are being exchanged
+	totals      map[clientid.ID]uint32            // expected total from the EOF
+	coordinator map[clientid.ID]bool              // sets instance to be coordinator for final EOF
+	peerCounts  map[clientid.ID]map[string]uint32 // last count of each instance, compared to total
+	peerSent    map[clientid.ID]map[string]uint32 // results sent by each instance, summed by coordinator
 }
 
 func NewSynchronizer(instanceID string, exchangeName string, connSettings middleware.ConnSettings, onSynced SyncedCallback, onFinished FinishedCallback) (*Synchronizer, error) {
@@ -43,13 +44,13 @@ func NewSynchronizer(instanceID string, exchangeName string, connSettings middle
 		exchange:    exchange,
 		onSynced:    onSynced,
 		onFinished:  onFinished,
-		processed:   map[uint32]uint32{},
-		sent:        map[uint32]uint32{},
-		closing:     map[uint32]bool{},
-		totals:      map[uint32]uint32{},
-		coordinator: map[uint32]bool{},
-		peerCounts:  map[uint32]map[string]uint32{},
-		peerSent:    map[uint32]map[string]uint32{},
+		processed:   map[clientid.ID]uint32{},
+		sent:        map[clientid.ID]uint32{},
+		closing:     map[clientid.ID]bool{},
+		totals:      map[clientid.ID]uint32{},
+		coordinator: map[clientid.ID]bool{},
+		peerCounts:  map[clientid.ID]map[string]uint32{},
+		peerSent:    map[clientid.ID]map[string]uint32{},
 	}, nil
 }
 
@@ -65,7 +66,7 @@ func (s *Synchronizer) Close() error {
 	return s.exchange.Close()
 }
 
-func (s *Synchronizer) Processed(clientID uint32) error {
+func (s *Synchronizer) Processed(clientID clientid.ID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -77,7 +78,7 @@ func (s *Synchronizer) Processed(clientID uint32) error {
 	return s.sendCount(clientID)
 }
 
-func (s *Synchronizer) EndOfData(clientID uint32, total uint32) error {
+func (s *Synchronizer) EndOfData(clientID clientid.ID, total uint32) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -88,14 +89,14 @@ func (s *Synchronizer) EndOfData(clientID uint32, total uint32) error {
 	return s.sendCount(clientID)
 }
 
-func (s *Synchronizer) Sent(clientID uint32) {
+func (s *Synchronizer) Sent(clientID clientid.ID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.sent[clientID]++
 }
 
-func (s *Synchronizer) Finished(clientID uint32) error {
+func (s *Synchronizer) Finished(clientID clientid.ID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -124,7 +125,7 @@ func (s *Synchronizer) handleSync(msg middleware.Message, ack func(), nack func(
 	ack()
 }
 
-func (s *Synchronizer) handleCount(clientID uint32, total uint32, peer inner.PeerCount) {
+func (s *Synchronizer) handleCount(clientID clientid.ID, total uint32, peer inner.PeerCount) {
 	if !s.closing[clientID] {
 		s.closing[clientID] = true
 		s.totals[clientID] = total
@@ -143,7 +144,7 @@ func (s *Synchronizer) handleCount(clientID uint32, total uint32, peer inner.Pee
 	go s.onSynced(clientID)
 }
 
-func (s *Synchronizer) handleFinished(clientID uint32, peer inner.PeerCount) {
+func (s *Synchronizer) handleFinished(clientID clientid.ID, peer inner.PeerCount) {
 	if !s.coordinator[clientID] {
 		return
 	}
@@ -151,7 +152,7 @@ func (s *Synchronizer) handleFinished(clientID uint32, peer inner.PeerCount) {
 	s.checkFinished(clientID)
 }
 
-func (s *Synchronizer) checkFinished(clientID uint32) {
+func (s *Synchronizer) checkFinished(clientID clientid.ID) {
 	if !s.coordinator[clientID] {
 		return
 	}
@@ -169,7 +170,7 @@ func (s *Synchronizer) checkFinished(clientID uint32) {
 	go s.onFinished(clientID, total)
 }
 
-func (s *Synchronizer) isConsumed(clientID uint32) bool {
+func (s *Synchronizer) isConsumed(clientID clientid.ID) bool {
 	var consumed uint32
 	for _, count := range s.peerCounts[clientID] {
 		consumed += count
@@ -177,11 +178,11 @@ func (s *Synchronizer) isConsumed(clientID uint32) bool {
 	return consumed == s.totals[clientID]
 }
 
-func (s *Synchronizer) sendCount(clientID uint32) error {
+func (s *Synchronizer) sendCount(clientID clientid.ID) error {
 	return s.send(clientID, inner.PeerCount{Instance: s.instanceID, Count: s.processed[clientID]})
 }
 
-func (s *Synchronizer) send(clientID uint32, payload inner.PeerCount) error {
+func (s *Synchronizer) send(clientID clientid.ID, payload inner.PeerCount) error {
 	data, err := external.Packet[inner.PeerCount]{
 		ClientID: clientID,
 		Total:    s.totals[clientID],
@@ -193,7 +194,7 @@ func (s *Synchronizer) send(clientID uint32, payload inner.PeerCount) error {
 	return s.exchange.Send(middleware.Message{Body: string(data)})
 }
 
-func (s *Synchronizer) cleanup(clientID uint32) {
+func (s *Synchronizer) cleanup(clientID clientid.ID) {
 	delete(s.processed, clientID)
 	delete(s.sent, clientID)
 	delete(s.closing, clientID)
@@ -203,7 +204,7 @@ func (s *Synchronizer) cleanup(clientID uint32) {
 	delete(s.peerSent, clientID)
 }
 
-func peerCount(counts map[uint32]map[string]uint32, clientID uint32) map[string]uint32 {
+func peerCount(counts map[clientid.ID]map[string]uint32, clientID clientid.ID) map[string]uint32 {
 	if counts[clientID] == nil {
 		counts[clientID] = map[string]uint32{}
 	}
