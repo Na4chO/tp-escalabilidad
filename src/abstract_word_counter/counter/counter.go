@@ -11,24 +11,25 @@ import (
 	"github.com/Na4chO/tp-escalabilidad/common/external"
 	"github.com/Na4chO/tp-escalabilidad/common/inner"
 	"github.com/Na4chO/tp-escalabilidad/common/middleware"
+	"github.com/Na4chO/tp-escalabilidad/common/synchronizer"
 )
 
 const countsDir = "counts"
 
-type Counter struct {
-	instanceID string
-	input      *common.PacketQueue[inner.AbstractWordCount]
-	sync       middleware.Router
-	averages   middleware.Router
-	results    *common.PacketQueue[inner.QueryResult]
-	countsDir  string
+type pending struct {
+	synced bool
+	avg    *float64
+}
 
-	mu         sync.Mutex
-	consumed   *sync.Cond
-	stopping   bool
-	closing    map[clientid.ID]bool
-	totals     map[clientid.ID]uint32
-	peerCounts map[clientid.ID]map[string]uint32
+type Counter struct {
+	input        *common.PacketQueue[inner.AbstractWordCount]
+	synchronizer *synchronizer.Synchronizer
+	averages     middleware.Router
+	results      *common.PacketQueue[inner.QueryResult]
+	countsDir    string
+
+	mu      sync.Mutex
+	pending map[clientid.ID]*pending
 }
 
 func NewCounter(connSettings middleware.ConnSettings) (*Counter, error) {
@@ -42,50 +43,44 @@ func NewCounter(connSettings middleware.ConnSettings) (*Counter, error) {
 		return nil, fmt.Errorf("creating counts directory: %w", err)
 	}
 
+	c := &Counter{countsDir: countsDir, pending: map[clientid.ID]*pending{}}
+
 	input, err := common.NewPacketQueue[inner.AbstractWordCount]("abstracts_from_2021", connSettings)
 	if err != nil {
 		return nil, fmt.Errorf("creating input queue: %w", err)
 	}
 
-	syncExchange, err := middleware.CreateExchangeMiddleware("abstract_word_counter_sync", []string{"sync"}, connSettings)
+	syncer, err := synchronizer.NewSynchronizer(instanceID, "abstract_word_counter_sync", connSettings, c.onSynced, c.onFinished)
 	if err != nil {
 		input.Close()
-		return nil, fmt.Errorf("creating sync exchange: %w", err)
+		return nil, fmt.Errorf("creating synchronizer: %w", err)
 	}
 
 	averages, err := middleware.CreateExchangeMiddleware("averages", []string{"average"}, connSettings)
 	if err != nil {
 		input.Close()
-		syncExchange.Close()
+		syncer.Close()
 		return nil, fmt.Errorf("creating averages exchange: %w", err)
 	}
 
 	results, err := common.NewPacketQueue[inner.QueryResult](common.QueueQueryResult, connSettings)
 	if err != nil {
 		input.Close()
-		syncExchange.Close()
+		syncer.Close()
 		averages.Close()
 		return nil, fmt.Errorf("creating results queue: %w", err)
 	}
 
-	c := &Counter{
-		instanceID: instanceID,
-		input:      input,
-		sync:       syncExchange,
-		averages:   averages,
-		results:    results,
-		countsDir:  countsDir,
-		closing:    map[clientid.ID]bool{},
-		totals:     map[clientid.ID]uint32{},
-		peerCounts: map[clientid.ID]map[string]uint32{},
-	}
-	c.consumed = sync.NewCond(&c.mu)
+	c.input = input
+	c.synchronizer = syncer
+	c.averages = averages
+	c.results = results
 	return c, nil
 }
 
 func (c *Counter) Run() error {
 	errs := make(chan error, 3)
-	go func() { errs <- c.sync.StartConsuming(c.handleSync) }()
+	go func() { errs <- c.synchronizer.StartConsuming() }()
 	go func() { errs <- c.averages.StartConsuming(c.handleAverage) }()
 	go func() { errs <- c.input.StartConsuming(c.handleInput) }()
 
@@ -100,27 +95,19 @@ func (c *Counter) Run() error {
 }
 
 func (c *Counter) Stop() {
-	c.mu.Lock()
-	c.stopping = true
-	c.consumed.Broadcast()
-	c.mu.Unlock()
-
 	c.input.StopConsuming()
-	c.sync.StopConsuming()
+	c.synchronizer.StopConsuming()
 	c.averages.StopConsuming()
 }
 
 func (c *Counter) Close() {
 	c.input.Close()
-	c.sync.Close()
+	c.synchronizer.Close()
 	c.averages.Close()
 	c.results.Close()
 }
 
 func (c *Counter) handleInput(packet external.Packet[inner.AbstractWordCount], ack func(), nack func()) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	var err error
 	if packet.IsEof {
 		err = c.handleEof(packet.ClientID, packet.Total)
@@ -139,52 +126,11 @@ func (c *Counter) handleWordCount(clientID clientid.ID, wordCount inner.Abstract
 	if err := appendCount(c.countsDir, clientID, wordCount.Url, wordCount.Count); err != nil {
 		return fmt.Errorf("storing word count: %w", err)
 	}
-	c.peerCount(clientID)[c.instanceID]++
-
-	if !c.closing[clientID] {
-		return nil
-	}
-	c.notifyIfConsumed(clientID)
-	return c.sendCount(clientID)
+	return c.synchronizer.Processed(clientID)
 }
 
 func (c *Counter) handleEof(clientID clientid.ID, total uint32) error {
-	c.closing[clientID] = true
-	c.totals[clientID] = total
-	c.notifyIfConsumed(clientID)
-	return c.sendCount(clientID)
-}
-
-func (c *Counter) handleSync(msg middleware.Message, ack func(), nack func()) {
-	packet, err := external.DecodePacket[inner.PeerCount]([]byte(msg.Body))
-	if err != nil {
-		slog.Error("Discarding sync message", "err", err)
-		nack()
-		return
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if packet.Payload.Instance == c.instanceID {
-		ack()
-		return
-	}
-
-	clientID := packet.ClientID
-	if !c.closing[clientID] {
-		c.closing[clientID] = true
-		c.totals[clientID] = packet.Total
-		if c.peerCount(clientID)[c.instanceID] > 0 {
-			if err := c.sendCount(clientID); err != nil {
-				slog.Error("While sending count", "client", clientID, "err", err)
-			}
-		}
-	}
-	c.peerCount(clientID)[packet.Payload.Instance] = packet.Payload.Count
-
-	c.notifyIfConsumed(clientID)
-	ack()
+	return c.synchronizer.EndOfData(clientID, total)
 }
 
 func (c *Counter) handleAverage(msg middleware.Message, ack func(), nack func()) {
@@ -195,38 +141,58 @@ func (c *Counter) handleAverage(msg middleware.Message, ack func(), nack func())
 		return
 	}
 
-	clientID := packet.ClientID
+	avg := packet.Payload.Average
+	c.filterIfReady(packet.ClientID, func(p *pending) { p.avg = &avg })
+	ack()
+}
+
+func (c *Counter) onSynced(clientID clientid.ID) {
+	c.filterIfReady(clientID, func(p *pending) { p.synced = true })
+}
+
+func (c *Counter) onFinished(clientID clientid.ID, total uint32) {
+	err := c.results.Send(external.Packet[inner.QueryResult]{
+		ClientID: clientID,
+		IsEof:    true,
+		Total:    total,
+		Payload:  inner.QueryResult{QueryType: inner.QueryAbstractAboveAverage},
+	})
+	if err != nil {
+		slog.Error("While sending results EOF", "client", clientID, "err", err)
+		return
+	}
+	slog.Info("Client finished", "client", clientID, "total", total)
+}
+
+func (c *Counter) filterIfReady(clientID clientid.ID, update func(*pending)) {
 	c.mu.Lock()
-	for !c.isConsumed(clientID) {
-		if c.stopping {
-			c.mu.Unlock()
-			return
-		}
-		c.consumed.Wait()
+	p := c.pending[clientID]
+	if p == nil {
+		p = &pending{}
+		c.pending[clientID] = p
+	}
+	update(p)
+	ready := p.synced && p.avg != nil
+	if ready {
+		delete(c.pending, clientID)
 	}
 	c.mu.Unlock()
 
-	// Ya no llegan más datos de este cliente: se puede leer el archivo sin el lock.
-	err = c.sendResults(clientID, packet.Payload.Average)
-	if err != nil {
+	if ready {
+		go c.filter(clientID, *p.avg)
+	}
+}
+
+func (c *Counter) filter(clientID clientid.ID, average float64) {
+	if err := c.sendResults(clientID, average); err != nil {
 		slog.Error("While sending results", "client", clientID, "err", err)
 	}
-
-	c.mu.Lock()
-	delete(c.closing, clientID)
-	delete(c.totals, clientID)
-	delete(c.peerCounts, clientID)
-	c.mu.Unlock()
-
 	if err := removeCounts(c.countsDir, clientID); err != nil {
 		slog.Error("While removing counts file", "client", clientID, "err", err)
 	}
-
-	if err != nil {
-		nack()
-		return
+	if err := c.synchronizer.Finished(clientID); err != nil {
+		slog.Error("While sending finished", "client", clientID, "err", err)
 	}
-	ack()
 }
 
 func (c *Counter) sendResults(clientID clientid.ID, average float64) error {
@@ -236,8 +202,12 @@ func (c *Counter) sendResults(clientID clientid.ID, average float64) error {
 		if float64(count) <= average {
 			return nil
 		}
+		if err := c.sendResult(clientID, url, count); err != nil {
+			return err
+		}
 		passed++
-		return c.sendResult(clientID, url, count)
+		c.synchronizer.Sent(clientID)
+		return nil
 	})
 	if err != nil {
 		return err
@@ -247,48 +217,12 @@ func (c *Counter) sendResults(clientID clientid.ID, average float64) error {
 }
 
 func (c *Counter) sendResult(clientID clientid.ID, url string, count uint32) error {
-	return c.results.SendData(clientID, inner.QueryResult{
-		QueryType: inner.QueryAbstractAboveAverage,
-		Url:       url,
-		WordCount: count,
-	})
-}
-
-func (c *Counter) sendCount(clientID clientid.ID) error {
-	data, err := external.Packet[inner.PeerCount]{
+	return c.results.Send(external.Packet[inner.QueryResult]{
 		ClientID: clientID,
-		Total:    c.totals[clientID],
-		Payload: inner.PeerCount{
-			Instance: c.instanceID,
-			Count:    c.peerCount(clientID)[c.instanceID],
+		Payload: inner.QueryResult{
+			QueryType: inner.QueryAbstractAboveAverage,
+			Url:       url,
+			WordCount: count,
 		},
-	}.Encode()
-	if err != nil {
-		return err
-	}
-	return c.sync.Send(middleware.Message{Body: string(data)})
-}
-
-func (c *Counter) isConsumed(clientID clientid.ID) bool {
-	if !c.closing[clientID] {
-		return false
-	}
-	var consumed uint32
-	for _, count := range c.peerCounts[clientID] {
-		consumed += count
-	}
-	return consumed == c.totals[clientID]
-}
-
-func (c *Counter) notifyIfConsumed(clientID clientid.ID) {
-	if c.isConsumed(clientID) {
-		c.consumed.Broadcast()
-	}
-}
-
-func (c *Counter) peerCount(clientID clientid.ID) map[string]uint32 {
-	if c.peerCounts[clientID] == nil {
-		c.peerCounts[clientID] = map[string]uint32{}
-	}
-	return c.peerCounts[clientID]
+	})
 }
