@@ -15,8 +15,7 @@ type clientStats struct {
 	abstracts uint64
 }
 
-// TODO setear en compose
-const instanceKey = "0"
+const allClientsKey = "#"
 
 type Calculator struct {
 	input    middleware.Router
@@ -25,7 +24,7 @@ type Calculator struct {
 }
 
 func NewCalculator(connSettings middleware.ConnSettings) (*Calculator, error) {
-	input, err := middleware.CreateExchangeMiddleware("abstracts_until_2020", []string{instanceKey}, connSettings)
+	input, err := middleware.CreateExchangeMiddleware("abstracts_until_2020", []string{allClientsKey}, connSettings)
 	if err != nil {
 		return nil, fmt.Errorf("creating input exchange: %w", err)
 	}

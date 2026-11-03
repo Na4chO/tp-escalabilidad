@@ -106,6 +106,18 @@ services:
       - MOM_HOST=rabbitmq
       - MOM_PORT=5672
 
+  abstract_preprocessing:
+    build:
+      context: ./src
+      dockerfile: abstract_preprocessing/Dockerfile
+    container_name: abstract_preprocessing
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+
   rabbitmq:
     build:
       context: ./src/rabbitmq
