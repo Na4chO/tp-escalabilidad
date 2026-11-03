@@ -1,5 +1,10 @@
 package inner
 
+const (
+	QueryIntersections uint8 = 3
+	QueryTopWords      uint8 = 4
+)
+
 type Metadata struct {
 	Url          string `json:"url"`
 	DateModified string `json:"dateModified"`

@@ -33,7 +33,7 @@ type TopAggregator struct {
 	resultQueue     *common.PacketQueue[inner.QueryResult]
 }
 
-func NewFrequencyCollector(cfg *config.Config) (*TopAggregator, error) {
+func NewTopAggregator(cfg *config.Config) (*TopAggregator, error) {
 	connSettings := middleware.ConnSettings{Hostname: cfg.MomHost, Port: cfg.MomPort}
 
 	partialTopQueue, err := common.NewPacketQueue[inner.PartialTop]("partialTops", connSettings)
@@ -168,14 +168,16 @@ func (ta *TopAggregator) checkAndFinalize(clientID uint32, state *clientState) e
 		return nil
 	}
 
-	result := inner.QueryResult{TopWords: state.topWords}
+	result := inner.QueryResult{
+		QueryType: inner.QueryTopWords,
+		TopWords:  state.topWords,
+	}
 
 	if err := ta.resultQueue.SendData(clientID, result); err != nil {
 		return fmt.Errorf("sending result for client %d: %w", clientID, err)
 	}
 
-	// TODO: Revisar si es necesario mandar este EOF. Las querys sin resultados parciales deberian mandar EOF?
-	if err := ta.resultQueue.SendEOF(clientID); err != nil {
+	if err := ta.resultQueue.SendEOFWithPayload(clientID, inner.QueryResult{QueryType: inner.QueryTopWords}); err != nil {
 		return fmt.Errorf("sending EOF result for client %d: %w", clientID, err)
 	}
 

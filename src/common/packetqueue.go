@@ -34,7 +34,17 @@ func (q *PacketQueue[T]) SendData(clientID uint32, payload T) error {
 }
 
 func (q *PacketQueue[T]) SendEOF(clientID uint32) error {
-	return q.Send(external.Packet[T]{ClientID: clientID, IsEof: true, Total: q.clientTotalSent[clientID]})
+	var payload T
+	return q.SendEOFWithPayload(clientID, payload)
+}
+
+func (q *PacketQueue[T]) SendEOFWithPayload(clientID uint32, payload T) error {
+	return q.Send(external.Packet[T]{
+		ClientID: clientID,
+		IsEof:    true,
+		Total:    q.clientTotalSent[clientID],
+		Payload:  payload,
+	})
 }
 
 func (q *PacketQueue[T]) StartConsuming(callback func(packet external.Packet[T], ack func(), nack func())) error {

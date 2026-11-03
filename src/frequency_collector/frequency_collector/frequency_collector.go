@@ -1,10 +1,13 @@
 package frequency_collector
 
 import (
+	"cmp"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
 	"sync/atomic"
 	"syscall"
 
@@ -21,7 +24,10 @@ type idiomsFrequency struct {
 }
 
 type clientState struct {
-	wordsFreq map[string]*idiomsFrequency
+	wordsFreq     map[string]*idiomsFrequency
+	receivedCount uint32
+	expectedTotal uint32
+	hasEOF        bool
 }
 
 type FrequencyCollector struct {
@@ -56,9 +62,11 @@ func NewFrequencyCollector(cfg *config.Config) (*FrequencyCollector, error) {
 
 	fc := &FrequencyCollector{
 		topSize:         cfg.TopSize,
+		clientStates:    make(map[uint32]*clientState),
 		wordsQueue:      wordsQueue,
 		partialTopQueue: partialTopQueue,
-		resultQueue:     resultQueue}
+		resultQueue:     resultQueue,
+	}
 	fc.running.Store(true)
 	return fc, nil
 }
@@ -85,6 +93,7 @@ func (fc *FrequencyCollector) handleAbstractWordsPacket(packet external.Packet[i
 		if err := fc.handleEOFPacket(packet); err != nil {
 			slog.Error("While handling EOF packet", "err", err)
 			nack()
+			return
 		}
 		ack()
 		return
@@ -93,6 +102,7 @@ func (fc *FrequencyCollector) handleAbstractWordsPacket(packet external.Packet[i
 	if err := fc.handleAbstractWords(packet); err != nil {
 		slog.Error("While handling abstract words message", "err", err)
 		nack()
+		return
 	}
 	ack()
 }
@@ -144,16 +154,87 @@ func (fc *FrequencyCollector) handleAbstractWords(packet external.Packet[inner.A
 			wordFreq.FrenchFrequency++
 		}
 	}
-	return fc.sendIntersections(packet.ClientID, intersections)
+
+	if len(intersections) > 0 {
+		if err := fc.sendIntersections(packet.ClientID, intersections); err != nil {
+			return err
+		}
+	}
+
+	state.receivedCount++
+	return fc.checkAndFinalize(packet.ClientID, state)
 }
 
-func isIntersection(in_language string, wordFreq *idiomsFrequency) bool {
-	return (in_language == "en" && wordFreq.EnglishFrequency == 0 && wordFreq.FrenchFrequency > 0) || (in_language == "en" && wordFreq.FrenchFrequency == 0 && wordFreq.EnglishFrequency > 0)
+func isIntersection(inLanguage string, wordFreq *idiomsFrequency) bool {
+	switch inLanguage {
+	case "en":
+		return wordFreq.EnglishFrequency == 0 && wordFreq.FrenchFrequency > 0
+	case "fr":
+		return wordFreq.FrenchFrequency == 0 && wordFreq.EnglishFrequency > 0
+	default:
+		return false
+	}
 }
 
 func (fc *FrequencyCollector) sendIntersections(clientId uint32, intersections []string) error {
 	return fc.resultQueue.Send(external.Packet[inner.QueryResult]{
 		ClientID: clientId,
-		Payload:  inner.QueryResult{IntersectionWords: intersections},
+		Payload: inner.QueryResult{
+			QueryType:         inner.QueryIntersections,
+			IntersectionWords: intersections,
+		},
 	})
+}
+
+func (fc *FrequencyCollector) handleEOFPacket(packet external.Packet[inner.AbstractWords]) error {
+	state := fc.clientStateFor(packet.ClientID)
+	state.hasEOF = true
+	state.expectedTotal = packet.Total
+
+	return fc.checkAndFinalize(packet.ClientID, state)
+}
+
+func (fc *FrequencyCollector) checkAndFinalize(clientID uint32, state *clientState) error {
+	if !state.hasEOF || state.receivedCount < state.expectedTotal {
+		return nil
+	}
+
+	top := fc.topWords(state)
+
+	if len(top) > 0 {
+		if err := fc.partialTopQueue.SendData(clientID, inner.PartialTop{Top: top}); err != nil {
+			return fmt.Errorf("sending partial top for client %d: %w", clientID, err)
+		}
+	}
+
+	if err := fc.partialTopQueue.SendEOF(clientID); err != nil {
+		return fmt.Errorf("sending partial top EOF for client %d: %w", clientID, err)
+	}
+
+	if err := fc.resultQueue.SendEOFWithPayload(clientID, inner.QueryResult{QueryType: inner.QueryIntersections}); err != nil {
+		return fmt.Errorf("sending intersections EOF for client %d: %w", clientID, err)
+	}
+
+	delete(fc.clientStates, clientID)
+	return nil
+}
+
+func (fc *FrequencyCollector) topWords(state *clientState) []inner.WordCount {
+	top := make([]inner.WordCount, 0, len(state.wordsFreq))
+	for word, freq := range state.wordsFreq {
+		top = append(top, inner.WordCount{
+			Word:  word,
+			Count: freq.EnglishFrequency + freq.FrenchFrequency,
+		})
+	}
+
+	slices.SortFunc(top, func(a, b inner.WordCount) int {
+		return cmp.Compare(b.Count, a.Count)
+	})
+
+	if len(top) > fc.topSize {
+		top = top[:fc.topSize]
+	}
+
+	return top
 }
