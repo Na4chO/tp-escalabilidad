@@ -1,8 +1,9 @@
 package inner
 
 const (
-	QueryIntersections uint8 = 3
-	QueryTopWords      uint8 = 4
+	QueryIntersections        uint8 = 3
+	QueryTopWords             uint8 = 4
+	QueryAbstractAboveAverage uint8 = 5
 )
 
 type Metadata struct {
@@ -36,8 +37,13 @@ type WordCount struct {
 }
 
 type AbstractWordCount struct {
-	Count      uint16 `json:"count"`
-	InLanguage string `json:"inLanguage"`
+	Url   string `json:"url"`
+	Count uint32 `json:"count"`
+}
+
+type PeerCount struct {
+	Instance string `json:"instance"`
+	Count    uint32 `json:"count"`
 }
 
 type Average struct {
