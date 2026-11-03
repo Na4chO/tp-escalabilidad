@@ -6,6 +6,7 @@ import (
 
 	"github.com/Na4chO/tp-escalabilidad/common"
 	"github.com/Na4chO/tp-escalabilidad/common/article"
+	clientid "github.com/Na4chO/tp-escalabilidad/common/client_id"
 	"github.com/Na4chO/tp-escalabilidad/common/inner"
 )
 
@@ -18,7 +19,7 @@ func NewArticleHandler(metadataQueue *common.PacketQueue[inner.Metadata], abstra
 	return &ArticleHandler{metadataQueue, abstractQueue}
 }
 
-func (articleHandler *ArticleHandler) HandleArticle(clientID uint32, a article.Article) error {
+func (articleHandler *ArticleHandler) HandleArticle(clientID clientid.ID, a article.Article) error {
 	dateModified := strconv.FormatInt(a.DateModified, 10)
 	inLanguage, ok := getLang(a.InLanguage)
 	if !ok {
@@ -46,7 +47,7 @@ func (articleHandler *ArticleHandler) HandleArticle(clientID uint32, a article.A
 	return articleHandler.abstractQueue.SendData(clientID, abstract)
 }
 
-func (articleHandler *ArticleHandler) HandleEOF(clientID uint32) error {
+func (articleHandler *ArticleHandler) HandleEOF(clientID clientid.ID) error {
 	if err := articleHandler.metadataQueue.SendEOF(clientID); err != nil {
 		return err
 	}

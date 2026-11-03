@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/Na4chO/tp-escalabilidad/common"
+	clientid "github.com/Na4chO/tp-escalabilidad/common/client_id"
 	"github.com/Na4chO/tp-escalabilidad/common/external"
 	"github.com/Na4chO/tp-escalabilidad/common/inner"
 	"github.com/Na4chO/tp-escalabilidad/common/middleware"
@@ -25,9 +26,9 @@ type Counter struct {
 	mu         sync.Mutex
 	consumed   *sync.Cond
 	stopping   bool
-	closing    map[uint32]bool
-	totals     map[uint32]uint32
-	peerCounts map[uint32]map[string]uint32
+	closing    map[clientid.ID]bool
+	totals     map[clientid.ID]uint32
+	peerCounts map[clientid.ID]map[string]uint32
 }
 
 func NewCounter(connSettings middleware.ConnSettings) (*Counter, error) {
@@ -74,9 +75,9 @@ func NewCounter(connSettings middleware.ConnSettings) (*Counter, error) {
 		averages:   averages,
 		results:    results,
 		countsDir:  countsDir,
-		closing:    map[uint32]bool{},
-		totals:     map[uint32]uint32{},
-		peerCounts: map[uint32]map[string]uint32{},
+		closing:    map[clientid.ID]bool{},
+		totals:     map[clientid.ID]uint32{},
+		peerCounts: map[clientid.ID]map[string]uint32{},
 	}
 	c.consumed = sync.NewCond(&c.mu)
 	return c, nil
@@ -134,7 +135,7 @@ func (c *Counter) handleInput(packet external.Packet[inner.AbstractWordCount], a
 	ack()
 }
 
-func (c *Counter) handleWordCount(clientID uint32, wordCount inner.AbstractWordCount) error {
+func (c *Counter) handleWordCount(clientID clientid.ID, wordCount inner.AbstractWordCount) error {
 	if err := appendCount(c.countsDir, clientID, wordCount.Url, wordCount.Count); err != nil {
 		return fmt.Errorf("storing word count: %w", err)
 	}
@@ -147,7 +148,7 @@ func (c *Counter) handleWordCount(clientID uint32, wordCount inner.AbstractWordC
 	return c.sendCount(clientID)
 }
 
-func (c *Counter) handleEof(clientID uint32, total uint32) error {
+func (c *Counter) handleEof(clientID clientid.ID, total uint32) error {
 	c.closing[clientID] = true
 	c.totals[clientID] = total
 	c.notifyIfConsumed(clientID)
@@ -228,7 +229,7 @@ func (c *Counter) handleAverage(msg middleware.Message, ack func(), nack func())
 	ack()
 }
 
-func (c *Counter) sendResults(clientID uint32, average float64) error {
+func (c *Counter) sendResults(clientID clientid.ID, average float64) error {
 	articles, passed := 0, 0
 	err := scanCounts(c.countsDir, clientID, func(url string, count uint32) error {
 		articles++
@@ -245,7 +246,7 @@ func (c *Counter) sendResults(clientID uint32, average float64) error {
 	return nil
 }
 
-func (c *Counter) sendResult(clientID uint32, url string, count uint32) error {
+func (c *Counter) sendResult(clientID clientid.ID, url string, count uint32) error {
 	return c.results.SendData(clientID, inner.QueryResult{
 		QueryType: inner.QueryAbstractAboveAverage,
 		Url:       url,
@@ -253,7 +254,7 @@ func (c *Counter) sendResult(clientID uint32, url string, count uint32) error {
 	})
 }
 
-func (c *Counter) sendCount(clientID uint32) error {
+func (c *Counter) sendCount(clientID clientid.ID) error {
 	data, err := external.Packet[inner.PeerCount]{
 		ClientID: clientID,
 		Total:    c.totals[clientID],
@@ -268,7 +269,7 @@ func (c *Counter) sendCount(clientID uint32) error {
 	return c.sync.Send(middleware.Message{Body: string(data)})
 }
 
-func (c *Counter) isConsumed(clientID uint32) bool {
+func (c *Counter) isConsumed(clientID clientid.ID) bool {
 	if !c.closing[clientID] {
 		return false
 	}
@@ -279,13 +280,13 @@ func (c *Counter) isConsumed(clientID uint32) bool {
 	return consumed == c.totals[clientID]
 }
 
-func (c *Counter) notifyIfConsumed(clientID uint32) {
+func (c *Counter) notifyIfConsumed(clientID clientid.ID) {
 	if c.isConsumed(clientID) {
 		c.consumed.Broadcast()
 	}
 }
 
-func (c *Counter) peerCount(clientID uint32) map[string]uint32 {
+func (c *Counter) peerCount(clientID clientid.ID) map[string]uint32 {
 	if c.peerCounts[clientID] == nil {
 		c.peerCounts[clientID] = map[string]uint32{}
 	}

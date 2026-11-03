@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/Na4chO/tp-escalabilidad/common"
+	clientid "github.com/Na4chO/tp-escalabilidad/common/client_id"
 	"github.com/Na4chO/tp-escalabilidad/common/external"
 	"github.com/Na4chO/tp-escalabilidad/common/inner"
 	"github.com/Na4chO/tp-escalabilidad/common/middleware"
@@ -33,7 +34,7 @@ type clientState struct {
 type FrequencyCollector struct {
 	running         atomic.Bool
 	topSize         int
-	clientStates    map[uint32]*clientState
+	clientStates    map[clientid.ID]*clientState
 	wordsQueue      *common.PacketQueue[inner.AbstractWords]
 	partialTopQueue *common.PacketQueue[inner.PartialTop]
 	resultQueue     *common.PacketQueue[inner.QueryResult]
@@ -62,7 +63,7 @@ func NewFrequencyCollector(cfg *config.Config) (*FrequencyCollector, error) {
 
 	fc := &FrequencyCollector{
 		topSize:         cfg.TopSize,
-		clientStates:    make(map[uint32]*clientState),
+		clientStates:    make(map[clientid.ID]*clientState),
 		wordsQueue:      wordsQueue,
 		partialTopQueue: partialTopQueue,
 		resultQueue:     resultQueue,
@@ -125,7 +126,7 @@ func (fc *FrequencyCollector) closeMiddlewares() error {
 	)
 }
 
-func (fc *FrequencyCollector) clientStateFor(clientId uint32) *clientState {
+func (fc *FrequencyCollector) clientStateFor(clientId clientid.ID) *clientState {
 	state, ok := fc.clientStates[clientId]
 	if !ok {
 		state = &clientState{wordsFreq: make(map[string]*idiomsFrequency)}
@@ -181,7 +182,7 @@ func isIntersection(inLanguage string, wordFreq *idiomsFrequency) bool {
 	}
 }
 
-func (fc *FrequencyCollector) sendIntersections(clientId uint32, intersections []string) error {
+func (fc *FrequencyCollector) sendIntersections(clientId clientid.ID, intersections []string) error {
 	return fc.resultQueue.SendData(clientId, inner.QueryResult{
 		QueryType:         inner.QueryIntersections,
 		IntersectionWords: intersections,
@@ -196,7 +197,7 @@ func (fc *FrequencyCollector) handleEOFPacket(packet external.Packet[inner.Abstr
 	return fc.checkAndFinalize(packet.ClientID, state)
 }
 
-func (fc *FrequencyCollector) checkAndFinalize(clientID uint32, state *clientState) error {
+func (fc *FrequencyCollector) checkAndFinalize(clientID clientid.ID, state *clientState) error {
 	if !state.hasEOF || state.receivedCount < state.expectedTotal {
 		return nil
 	}
@@ -205,16 +206,16 @@ func (fc *FrequencyCollector) checkAndFinalize(clientID uint32, state *clientSta
 
 	if len(top) > 0 {
 		if err := fc.partialTopQueue.SendData(clientID, inner.PartialTop{Top: top}); err != nil {
-			return fmt.Errorf("sending partial top for client %d: %w", clientID, err)
+			return fmt.Errorf("sending partial top for client %s: %w", clientID, err)
 		}
 	}
 
 	if err := fc.partialTopQueue.SendEOF(clientID); err != nil {
-		return fmt.Errorf("sending partial top EOF for client %d: %w", clientID, err)
+		return fmt.Errorf("sending partial top EOF for client %s: %w", clientID, err)
 	}
 
 	if err := fc.resultQueue.SendEOFWithPayload(clientID, inner.QueryResult{QueryType: inner.QueryIntersections}); err != nil {
-		return fmt.Errorf("sending intersections EOF for client %d: %w", clientID, err)
+		return fmt.Errorf("sending intersections EOF for client %s: %w", clientID, err)
 	}
 
 	delete(fc.clientStates, clientID)

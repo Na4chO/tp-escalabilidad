@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	clientid "github.com/Na4chO/tp-escalabilidad/common/client_id"
 	"github.com/Na4chO/tp-escalabilidad/common/external"
 	"github.com/Na4chO/tp-escalabilidad/common/inner"
 	"github.com/Na4chO/tp-escalabilidad/common/middleware"
@@ -20,7 +21,7 @@ const instanceKey = "0"
 type Calculator struct {
 	input    middleware.Router
 	averages middleware.Router
-	clients  map[uint32]*clientStats
+	clients  map[clientid.ID]*clientStats
 }
 
 func NewCalculator(connSettings middleware.ConnSettings) (*Calculator, error) {
@@ -35,7 +36,7 @@ func NewCalculator(connSettings middleware.ConnSettings) (*Calculator, error) {
 		return nil, fmt.Errorf("creating averages exchange: %w", err)
 	}
 
-	return &Calculator{input: input, averages: averages, clients: map[uint32]*clientStats{}}, nil
+	return &Calculator{input: input, averages: averages, clients: map[clientid.ID]*clientStats{}}, nil
 }
 
 func (c *Calculator) Run() error {
@@ -72,7 +73,7 @@ func (c *Calculator) handleMessage(msg middleware.Message, ack func(), nack func
 	ack()
 }
 
-func (c *Calculator) handleWordCount(clientID uint32, wordCount inner.AbstractWordCount) error {
+func (c *Calculator) handleWordCount(clientID clientid.ID, wordCount inner.AbstractWordCount) error {
 	stats, ok := c.clients[clientID]
 	if !ok {
 		stats = &clientStats{}
@@ -83,7 +84,7 @@ func (c *Calculator) handleWordCount(clientID uint32, wordCount inner.AbstractWo
 	return nil
 }
 
-func (c *Calculator) handleEof(clientID uint32) error {
+func (c *Calculator) handleEof(clientID clientid.ID) error {
 	var average float64
 	if stats, ok := c.clients[clientID]; ok && stats.abstracts > 0 {
 		average = float64(stats.words) / float64(stats.abstracts)

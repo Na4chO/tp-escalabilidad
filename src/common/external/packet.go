@@ -3,13 +3,15 @@ package external
 import (
 	"encoding/json"
 	"fmt"
+
+	clientid "github.com/Na4chO/tp-escalabilidad/common/client_id"
 )
 
 type Packet[T any] struct {
-	ClientID uint32 `json:"client_id"`
-	IsEof    bool   `json:"is_eof"`
-	Total    uint32 `json:"total"`
-	Payload  T      `json:"payload,omitzero"`
+	ClientID clientid.ID `json:"client_id"`
+	IsEof    bool        `json:"is_eof"`
+	Total    uint32      `json:"total"`
+	Payload  T           `json:"payload,omitzero"`
 }
 
 func (e Packet[T]) Encode() ([]byte, error) {
