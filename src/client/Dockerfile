@@ -3,7 +3,7 @@ FROM golang:1.24-alpine3.23 AS builder
 RUN mkdir -p /build
 WORKDIR /build
 
-COPY go.mod ./
+COPY go.mod go.sum ./
 COPY common ./common
 COPY client ./client
 

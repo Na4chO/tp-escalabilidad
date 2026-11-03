@@ -3,6 +3,8 @@ SHELL := /bin/bash
 build:
 	cd src && go build -o bin/client ./client
 	cd src && go build -o bin/server ./server
+	cd src && go build -o bin/frequency_collector ./frequency_collector
+	cd src && go build -o bin/top_aggregator ./top_aggregator
 .PHONY: build
 
 check:

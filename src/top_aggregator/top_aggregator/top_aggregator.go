@@ -36,25 +36,25 @@ type TopAggregator struct {
 func NewTopAggregator(cfg *config.Config) (*TopAggregator, error) {
 	connSettings := middleware.ConnSettings{Hostname: cfg.MomHost, Port: cfg.MomPort}
 
-	partialTopQueue, err := common.NewPacketQueue[inner.PartialTop]("partialTops", connSettings)
+	partialTopQueue, err := common.NewPacketQueue[inner.PartialTop](common.QueuePartialTops, connSettings)
 	if err != nil {
 		return nil, err
 	}
 
-	resultQueue, err := common.NewPacketQueue[inner.QueryResult]("result", connSettings)
+	resultQueue, err := common.NewPacketQueue[inner.QueryResult](common.QueueQueryResult, connSettings)
 	if err != nil {
 		partialTopQueue.Close()
 		return nil, err
 	}
 
-	fc := &TopAggregator{
+	ta := &TopAggregator{
 		topSize:         cfg.TopSize,
 		clientStates:    make(map[uint32]*clientState),
 		partialTopQueue: partialTopQueue,
 		resultQueue:     resultQueue,
 	}
-	fc.running.Store(true)
-	return fc, nil
+	ta.running.Store(true)
+	return ta, nil
 }
 
 func (ta *TopAggregator) Run() error {
@@ -112,7 +112,10 @@ func (ta *TopAggregator) handleDataPacket(packet external.Packet[inner.PartialTo
 
 	incoming := packet.Payload.Top
 	slices.SortFunc(incoming, func(a, b inner.WordCount) int {
-		return cmp.Compare(b.Count, a.Count)
+		if byCount := cmp.Compare(b.Count, a.Count); byCount != 0 {
+			return byCount
+		}
+		return cmp.Compare(a.Word, b.Word)
 	})
 
 	state.topWords = mergeTops(state.topWords, incoming, ta.topSize)
@@ -144,6 +147,9 @@ func mergeTops(current, incoming []inner.WordCount, topSize int) []inner.WordCou
 			newTop[i+j] = incoming[j]
 			j++
 		case current[i].Count < incoming[j].Count:
+			newTop[i+j] = incoming[j]
+			j++
+		case current[i].Count == incoming[j].Count && incoming[j].Word < current[i].Word:
 			newTop[i+j] = incoming[j]
 			j++
 		default:

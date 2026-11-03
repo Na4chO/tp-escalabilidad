@@ -17,6 +17,9 @@ func NewConfig() (*Config, error) {
 	if err != nil {
 		return nil, errors.New("TOP_SIZE environment variable is required and must be a number")
 	}
+	if topSize <= 0 {
+		return nil, errors.New("TOP_SIZE must be greater than zero")
+	}
 
 	momPort, err := strconv.Atoi(os.Getenv("MOM_PORT"))
 	if err != nil {

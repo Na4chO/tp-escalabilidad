@@ -42,18 +42,18 @@ type FrequencyCollector struct {
 func NewFrequencyCollector(cfg *config.Config) (*FrequencyCollector, error) {
 	connSettings := middleware.ConnSettings{Hostname: cfg.MomHost, Port: cfg.MomPort}
 
-	wordsQueue, err := common.NewPacketQueue[inner.AbstractWords]("abstractWords", connSettings)
+	wordsQueue, err := common.NewPacketQueue[inner.AbstractWords](common.QueueAbstractWords, connSettings)
 	if err != nil {
 		return nil, err
 	}
 
-	partialTopQueue, err := common.NewPacketQueue[inner.PartialTop]("partialTops", connSettings)
+	partialTopQueue, err := common.NewPacketQueue[inner.PartialTop](common.QueuePartialTops, connSettings)
 	if err != nil {
 		wordsQueue.Close()
 		return nil, err
 	}
 
-	resultQueue, err := common.NewPacketQueue[inner.QueryResult]("result", connSettings)
+	resultQueue, err := common.NewPacketQueue[inner.QueryResult](common.QueueQueryResult, connSettings)
 	if err != nil {
 		partialTopQueue.Close()
 		wordsQueue.Close()
@@ -138,6 +138,11 @@ func (fc *FrequencyCollector) handleAbstractWords(packet external.Packet[inner.A
 	var intersections []string
 	state := fc.clientStateFor(packet.ClientID)
 
+	if packet.Payload.InLanguage != "en" && packet.Payload.InLanguage != "fr" {
+		state.receivedCount++
+		return fc.checkAndFinalize(packet.ClientID, state)
+	}
+
 	for _, word := range packet.Payload.Words {
 		wordFreq, ok := state.wordsFreq[word]
 		if !ok {
@@ -177,12 +182,9 @@ func isIntersection(inLanguage string, wordFreq *idiomsFrequency) bool {
 }
 
 func (fc *FrequencyCollector) sendIntersections(clientId uint32, intersections []string) error {
-	return fc.resultQueue.Send(external.Packet[inner.QueryResult]{
-		ClientID: clientId,
-		Payload: inner.QueryResult{
-			QueryType:         inner.QueryIntersections,
-			IntersectionWords: intersections,
-		},
+	return fc.resultQueue.SendData(clientId, inner.QueryResult{
+		QueryType:         inner.QueryIntersections,
+		IntersectionWords: intersections,
 	})
 }
 
@@ -229,7 +231,10 @@ func (fc *FrequencyCollector) topWords(state *clientState) []inner.WordCount {
 	}
 
 	slices.SortFunc(top, func(a, b inner.WordCount) int {
-		return cmp.Compare(b.Count, a.Count)
+		if byCount := cmp.Compare(b.Count, a.Count); byCount != 0 {
+			return byCount
+		}
+		return cmp.Compare(a.Word, b.Word)
 	})
 
 	if len(top) > fc.topSize {

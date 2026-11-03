@@ -46,7 +46,7 @@ type Average struct {
 
 type QueryResult struct {
 	QueryType         uint8       `json:"queryType"`
-	IntersectionWords []string    `json:"intersectionWord,omitempty"`
+	IntersectionWords []string    `json:"intersectionWords,omitempty"`
 	TopWords          []WordCount `json:"topWords,omitempty"`
 	Url               string      `json:"url,omitempty"`
 	WordCount         uint32      `json:"wordCount,omitempty"`

@@ -1,6 +1,8 @@
 package common
 
 import (
+	"sync"
+
 	"github.com/Na4chO/tp-escalabilidad/common/external"
 	"github.com/Na4chO/tp-escalabilidad/common/middleware"
 )
@@ -8,6 +10,7 @@ import (
 type PacketQueue[T any] struct {
 	mw              middleware.Middleware
 	clientTotalSent map[uint32]uint32
+	countersMutex   sync.Mutex
 }
 
 func NewPacketQueue[T any](queueName string, settings middleware.ConnSettings) (*PacketQueue[T], error) {
@@ -17,6 +20,7 @@ func NewPacketQueue[T any](queueName string, settings middleware.ConnSettings) (
 	}
 	return &PacketQueue[T]{mw: queue, clientTotalSent: make(map[uint32]uint32)}, nil
 }
+
 func (q *PacketQueue[T]) Send(packet external.Packet[T]) error {
 	data, err := packet.Encode()
 	if err != nil {
@@ -29,7 +33,10 @@ func (q *PacketQueue[T]) SendData(clientID uint32, payload T) error {
 	if err := q.Send(external.Packet[T]{ClientID: clientID, Payload: payload}); err != nil {
 		return err
 	}
+
+	q.countersMutex.Lock()
 	q.clientTotalSent[clientID]++
+	q.countersMutex.Unlock()
 	return nil
 }
 
@@ -39,12 +46,23 @@ func (q *PacketQueue[T]) SendEOF(clientID uint32) error {
 }
 
 func (q *PacketQueue[T]) SendEOFWithPayload(clientID uint32, payload T) error {
-	return q.Send(external.Packet[T]{
+	q.countersMutex.Lock()
+	total := q.clientTotalSent[clientID]
+	q.countersMutex.Unlock()
+
+	if err := q.Send(external.Packet[T]{
 		ClientID: clientID,
 		IsEof:    true,
-		Total:    q.clientTotalSent[clientID],
+		Total:    total,
 		Payload:  payload,
-	})
+	}); err != nil {
+		return err
+	}
+
+	q.countersMutex.Lock()
+	delete(q.clientTotalSent, clientID)
+	q.countersMutex.Unlock()
+	return nil
 }
 
 func (q *PacketQueue[T]) StartConsuming(callback func(packet external.Packet[T], ack func(), nack func())) error {

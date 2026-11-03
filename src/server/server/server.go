@@ -30,18 +30,18 @@ type Server struct {
 func NewServer(cfg config.Config) (*Server, error) {
 	connSettings := middleware.ConnSettings{Hostname: cfg.MomHost, Port: cfg.MomPort}
 
-	resultsQueue, err := common.NewPacketQueue[inner.QueryResult]("queryResult", connSettings)
+	resultsQueue, err := common.NewPacketQueue[inner.QueryResult](common.QueueQueryResult, connSettings)
 	if err != nil {
 		return nil, err
 	}
 
-	metadataQueue, err := common.NewPacketQueue[inner.Metadata]("metadata", connSettings)
+	metadataQueue, err := common.NewPacketQueue[inner.Metadata](common.QueueMetadata, connSettings)
 	if err != nil {
 		resultsQueue.Close()
 		return nil, err
 	}
 
-	abstractQueue, err := common.NewPacketQueue[inner.Abstract]("abstract", connSettings)
+	abstractQueue, err := common.NewPacketQueue[inner.Abstract](common.QueueAbstract, connSettings)
 	if err != nil {
 		resultsQueue.Close()
 		metadataQueue.Close()
@@ -190,7 +190,7 @@ func (s *Server) handleClientResponse(packet external.Packet[inner.QueryResult],
 			slog.Error("Closing connection", "err", err)
 		}
 		slog.Debug("While writing query result", "err", err)
-		nack()
+		ack()
 		return
 	}
 	ack()
