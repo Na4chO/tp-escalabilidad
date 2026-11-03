@@ -7,6 +7,7 @@ import (
 )
 
 type Config struct {
+	ServerID   string
 	ServerHost string
 	ServerPort string
 	MomHost    string
@@ -14,6 +15,10 @@ type Config struct {
 }
 
 func NewConfig() (*Config, error) {
+	serverID := os.Getenv("SERVER_ID")
+	if serverID == "" {
+		return nil, errors.New("SERVER_ID environment variable is required")
+	}
 	serverHost := os.Getenv("SERVER_HOST")
 	if serverHost == "" {
 		return nil, errors.New("SERVER_HOST environment variable is required")
@@ -35,6 +40,7 @@ func NewConfig() (*Config, error) {
 	}
 
 	return &Config{
+		ServerID:   serverID,
 		ServerHost: serverHost,
 		ServerPort: serverPort,
 		MomHost:    momHost,

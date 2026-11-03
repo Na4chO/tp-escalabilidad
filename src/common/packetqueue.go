@@ -3,13 +3,14 @@ package common
 import (
 	"sync"
 
+	clientid "github.com/Na4chO/tp-escalabilidad/common/client_id"
 	"github.com/Na4chO/tp-escalabilidad/common/external"
 	"github.com/Na4chO/tp-escalabilidad/common/middleware"
 )
 
 type PacketQueue[T any] struct {
 	mw              middleware.Middleware
-	clientTotalSent map[uint32]uint32
+	clientTotalSent map[clientid.ID]uint32
 	countersMutex   sync.Mutex
 }
 
@@ -18,7 +19,7 @@ func NewPacketQueue[T any](queueName string, settings middleware.ConnSettings) (
 	if err != nil {
 		return nil, err
 	}
-	return &PacketQueue[T]{mw: queue, clientTotalSent: make(map[uint32]uint32)}, nil
+	return &PacketQueue[T]{mw: queue, clientTotalSent: make(map[clientid.ID]uint32)}, nil
 }
 
 func (q *PacketQueue[T]) Send(packet external.Packet[T]) error {
@@ -29,7 +30,7 @@ func (q *PacketQueue[T]) Send(packet external.Packet[T]) error {
 	return q.mw.Send(middleware.Message{Body: string(data)})
 }
 
-func (q *PacketQueue[T]) SendData(clientID uint32, payload T) error {
+func (q *PacketQueue[T]) SendData(clientID clientid.ID, payload T) error {
 	if err := q.Send(external.Packet[T]{ClientID: clientID, Payload: payload}); err != nil {
 		return err
 	}
@@ -40,12 +41,12 @@ func (q *PacketQueue[T]) SendData(clientID uint32, payload T) error {
 	return nil
 }
 
-func (q *PacketQueue[T]) SendEOF(clientID uint32) error {
+func (q *PacketQueue[T]) SendEOF(clientID clientid.ID) error {
 	var payload T
 	return q.SendEOFWithPayload(clientID, payload)
 }
 
-func (q *PacketQueue[T]) SendEOFWithPayload(clientID uint32, payload T) error {
+func (q *PacketQueue[T]) SendEOFWithPayload(clientID clientid.ID, payload T) error {
 	q.countersMutex.Lock()
 	total := q.clientTotalSent[clientID]
 	q.countersMutex.Unlock()

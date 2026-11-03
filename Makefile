@@ -5,6 +5,7 @@ build:
 	cd src && go build -o bin/server ./server
 	cd src && go build -o bin/frequency_collector ./frequency_collector
 	cd src && go build -o bin/top_aggregator ./top_aggregator
+	cd src && go build -o bin/abstract_preprocessing ./abstract_preprocessing
 .PHONY: build
 
 check:

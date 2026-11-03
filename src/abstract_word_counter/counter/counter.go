@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/Na4chO/tp-escalabilidad/common"
+	clientid "github.com/Na4chO/tp-escalabilidad/common/client_id"
 	"github.com/Na4chO/tp-escalabilidad/common/external"
 	"github.com/Na4chO/tp-escalabilidad/common/inner"
 	"github.com/Na4chO/tp-escalabilidad/common/middleware"
@@ -28,7 +29,7 @@ type Counter struct {
 	countsDir    string
 
 	mu      sync.Mutex
-	pending map[uint32]*pending
+	pending map[clientid.ID]*pending
 }
 
 func NewCounter(connSettings middleware.ConnSettings) (*Counter, error) {
@@ -121,14 +122,14 @@ func (c *Counter) handleInput(packet external.Packet[inner.AbstractWordCount], a
 	ack()
 }
 
-func (c *Counter) handleWordCount(clientID uint32, wordCount inner.AbstractWordCount) error {
+func (c *Counter) handleWordCount(clientID clientid.ID, wordCount inner.AbstractWordCount) error {
 	if err := appendCount(c.countsDir, clientID, wordCount.Url, wordCount.Count); err != nil {
 		return fmt.Errorf("storing word count: %w", err)
 	}
 	return c.synchronizer.Processed(clientID)
 }
 
-func (c *Counter) handleEof(clientID, total uint32) error {
+func (c *Counter) handleEof(clientID clientid.ID, total uint32) error {
 	return c.synchronizer.EndOfData(clientID, total)
 }
 
@@ -194,7 +195,7 @@ func (c *Counter) filter(clientID uint32, average float64) {
 	}
 }
 
-func (c *Counter) sendResults(clientID uint32, average float64) error {
+func (c *Counter) sendResults(clientID clientid.ID, average float64) error {
 	articles, passed := 0, 0
 	err := scanCounts(c.countsDir, clientID, func(url string, count uint32) error {
 		articles++
@@ -215,7 +216,7 @@ func (c *Counter) sendResults(clientID uint32, average float64) error {
 	return nil
 }
 
-func (c *Counter) sendResult(clientID uint32, url string, count uint32) error {
+func (c *Counter) sendResult(clientID clientid.ID, url string, count uint32) error {
 	return c.results.Send(external.Packet[inner.QueryResult]{
 		ClientID: clientID,
 		Payload: inner.QueryResult{

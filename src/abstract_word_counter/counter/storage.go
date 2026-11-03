@@ -8,13 +8,15 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	clientid "github.com/Na4chO/tp-escalabilidad/common/client_id"
 )
 
-func countsPath(dir string, clientID uint32) string {
-	return filepath.Join(dir, strconv.FormatUint(uint64(clientID), 10)+".txt")
+func countsPath(dir string, clientID clientid.ID) string {
+	return filepath.Join(dir, clientID.String()+".txt")
 }
 
-func appendCount(dir string, clientID uint32, url string, count uint32) error {
+func appendCount(dir string, clientID clientid.ID, url string, count uint32) error {
 	file, err := os.OpenFile(countsPath(dir, clientID), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
@@ -26,7 +28,7 @@ func appendCount(dir string, clientID uint32, url string, count uint32) error {
 }
 
 // URL puede tener ':' entonces se hace la separacion por la ultima aparicion
-func scanCounts(dir string, clientID uint32, handle func(url string, count uint32) error) error {
+func scanCounts(dir string, clientID clientid.ID, handle func(url string, count uint32) error) error {
 	file, err := os.Open(countsPath(dir, clientID))
 
 	if errors.Is(err, os.ErrNotExist) {
@@ -60,7 +62,7 @@ func scanCounts(dir string, clientID uint32, handle func(url string, count uint3
 	return scanner.Err()
 }
 
-func removeCounts(dir string, clientID uint32) error {
+func removeCounts(dir string, clientID clientid.ID) error {
 	err := os.Remove(countsPath(dir, clientID))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil

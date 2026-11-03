@@ -12,6 +12,7 @@ services:
       - SERVER_PORT=5678
       - MOM_HOST=rabbitmq
       - MOM_PORT=5672
+      - SERVER_ID=1
     ports:
       - "5678:5678"
 
@@ -98,6 +99,18 @@ services:
       context: ./src
       dockerfile: average_calculator/Dockerfile
     container_name: average_calculator
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+
+  abstract_preprocessing:
+    build:
+      context: ./src
+      dockerfile: abstract_preprocessing/Dockerfile
+    container_name: abstract_preprocessing
     depends_on:
       rabbitmq:
         condition: service_healthy
