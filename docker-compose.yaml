@@ -24,10 +24,22 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      - TOP_SIZE=5
       - MOM_HOST=rabbitmq
       - MOM_PORT=5672
-    ports:
-      - "5678:5678"
+
+  top_aggregator:
+    build:
+      context: ./src
+      dockerfile: top_aggregator/Dockerfile
+    container_name: top_aggregator
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - TOP_SIZE=5
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
 
   client_0:
     build:

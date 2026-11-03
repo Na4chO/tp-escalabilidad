@@ -1,11 +1,13 @@
 package top_aggregator
 
 import (
+	"cmp"
 	"errors"
-	"go/types"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
 	"sync/atomic"
 	"syscall"
 
@@ -16,11 +18,17 @@ import (
 	"github.com/Na4chO/tp-escalabilidad/top_aggregator/config"
 )
 
-type clientState struct{}
+type clientState struct {
+	topWords      []inner.WordCount
+	receivedCount uint32
+	expectedTotal uint32
+	hasEOF        bool
+}
 
 type TopAggregator struct {
 	running         atomic.Bool
-	clientStates    types.Nil
+	topSize         int
+	clientStates    map[uint32]*clientState
 	partialTopQueue *common.PacketQueue[inner.PartialTop]
 	resultQueue     *common.PacketQueue[inner.QueryResult]
 }
@@ -39,7 +47,12 @@ func NewFrequencyCollector(cfg *config.Config) (*TopAggregator, error) {
 		return nil, err
 	}
 
-	fc := &TopAggregator{partialTopQueue: partialTopQueue, resultQueue: resultQueue}
+	fc := &TopAggregator{
+		topSize:         cfg.TopSize,
+		clientStates:    make(map[uint32]*clientState),
+		partialTopQueue: partialTopQueue,
+		resultQueue:     resultQueue,
+	}
 	fc.running.Store(true)
 	return fc, nil
 }
@@ -79,18 +92,102 @@ func (ta *TopAggregator) closeMiddlewares() error {
 }
 
 func (ta *TopAggregator) handlePartialTopPacket(packet external.Packet[inner.PartialTop], ack func(), nack func()) {
+	var err error
 	if packet.IsEof {
-		if err := ta.handleEOFPacket(packet); err != nil {
-			slog.Error("While handling EOF packet", "err", err)
-			nack()
-		}
-		ack()
-		return
+		err = ta.handleEOFPacket(packet)
+	} else {
+		err = ta.handleDataPacket(packet)
 	}
 
-	if err := ta.handleAbstractWords(packet); err != nil {
-		slog.Error("While handling abstract words message", "err", err)
+	if err != nil {
+		slog.Error("Error processing partial top packet", "clientID", packet.ClientID, "isEOF", packet.IsEof, "err", err)
 		nack()
+		return
 	}
 	ack()
+}
+
+func (ta *TopAggregator) handleDataPacket(packet external.Packet[inner.PartialTop]) error {
+	state := ta.clientStateFor(packet.ClientID)
+
+	incoming := packet.Payload.Top
+	slices.SortFunc(incoming, func(a, b inner.WordCount) int {
+		return cmp.Compare(b.Count, a.Count)
+	})
+
+	state.topWords = mergeTops(state.topWords, incoming, ta.topSize)
+	state.receivedCount++
+
+	return ta.checkAndFinalize(packet.ClientID, state)
+}
+
+func mergeTops(current, incoming []inner.WordCount, topSize int) []inner.WordCount {
+	if len(incoming) == 0 {
+		return current
+	}
+	if len(current) == 0 {
+		if len(incoming) > topSize {
+			return incoming[:topSize]
+		}
+		return incoming
+	}
+
+	newTop := make([]inner.WordCount, min(topSize, len(current)+len(incoming)))
+
+	i, j := 0, 0
+	for (i+j < topSize) && (i < len(current) || j < len(incoming)) {
+		switch {
+		case j >= len(incoming):
+			newTop[i+j] = current[i]
+			i++
+		case i >= len(current):
+			newTop[i+j] = incoming[j]
+			j++
+		case current[i].Count < incoming[j].Count:
+			newTop[i+j] = incoming[j]
+			j++
+		default:
+			newTop[i+j] = current[i]
+			i++
+		}
+	}
+
+	return newTop
+}
+
+func (ta *TopAggregator) handleEOFPacket(packet external.Packet[inner.PartialTop]) error {
+	state := ta.clientStateFor(packet.ClientID)
+	state.hasEOF = true
+	state.expectedTotal = packet.Total
+
+	return ta.checkAndFinalize(packet.ClientID, state)
+}
+
+func (ta *TopAggregator) checkAndFinalize(clientID uint32, state *clientState) error {
+	if !state.hasEOF || state.receivedCount < state.expectedTotal {
+		return nil
+	}
+
+	result := inner.QueryResult{TopWords: state.topWords}
+
+	if err := ta.resultQueue.SendData(clientID, result); err != nil {
+		return fmt.Errorf("sending result for client %d: %w", clientID, err)
+	}
+
+	// TODO: Revisar si es necesario mandar este EOF. Las querys sin resultados parciales deberian mandar EOF?
+	if err := ta.resultQueue.SendEOF(clientID); err != nil {
+		return fmt.Errorf("sending EOF result for client %d: %w", clientID, err)
+	}
+
+	delete(ta.clientStates, clientID)
+	return nil
+}
+
+func (ta *TopAggregator) clientStateFor(clientID uint32) *clientState {
+	state, exists := ta.clientStates[clientID]
+	if !exists {
+		state = &clientState{topWords: []inner.WordCount{}}
+		ta.clientStates[clientID] = state
+	}
+	return state
 }

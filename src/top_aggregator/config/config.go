@@ -7,11 +7,17 @@ import (
 )
 
 type Config struct {
+	TopSize int
 	MomHost string
 	MomPort int
 }
 
 func NewConfig() (*Config, error) {
+	topSize, err := strconv.Atoi(os.Getenv("TOP_SIZE"))
+	if err != nil {
+		return nil, errors.New("TOP_SIZE environment variable is required and must be a number")
+	}
+
 	momPort, err := strconv.Atoi(os.Getenv("MOM_PORT"))
 	if err != nil {
 		return nil, errors.New("MOM_PORT environment variable is required and must be a number")
@@ -23,6 +29,7 @@ func NewConfig() (*Config, error) {
 	}
 
 	return &Config{
+		TopSize: topSize,
 		MomHost: momHost,
 		MomPort: momPort,
 	}, nil

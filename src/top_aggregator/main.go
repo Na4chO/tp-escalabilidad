@@ -4,8 +4,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/Na4chO/tp-escalabilidad/frequency_collector/config"
-	fc "github.com/Na4chO/tp-escalabilidad/frequency_collector/frequency_collector"
+	"github.com/Na4chO/tp-escalabilidad/top_aggregator/config"
+	fc "github.com/Na4chO/tp-escalabilidad/top_aggregator/top_aggregator"
 )
 
 func run() int {
@@ -15,7 +15,7 @@ func run() int {
 		return 1
 	}
 
-	node, err := fc.NewFrequencyCollector(cfg)
+	node, err := fc.NewTopAggregator(cfg)
 	if err != nil {
 		slog.Error("While initializing Top Aggregator", "err", err)
 		return 1

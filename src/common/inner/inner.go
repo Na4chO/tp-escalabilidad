@@ -22,7 +22,12 @@ type AbstractWords struct {
 }
 
 type PartialTop struct {
-	Words map[string]uint32 `json:"words"`
+	Top []WordCount `json:"words"`
+}
+
+type WordCount struct {
+	Word  string `json:"word"`
+	Count uint32 `json:"count"`
 }
 
 type AbstractWordCount struct {
@@ -35,9 +40,9 @@ type Average struct {
 }
 
 type QueryResult struct {
-	QueryType         uint8             `json:"queryType"`
-	IntersectionWords []string          `json:"intersectionWord,omitempty"`
-	TopWords          map[string]uint32 `json:"topWords,omitempty"`
-	Url               string            `json:"url,omitempty"`
-	WordCount         uint32            `json:"wordCount,omitempty"`
+	QueryType         uint8       `json:"queryType"`
+	IntersectionWords []string    `json:"intersectionWord,omitempty"`
+	TopWords          []WordCount `json:"topWords,omitempty"`
+	Url               string      `json:"url,omitempty"`
+	WordCount         uint32      `json:"wordCount,omitempty"`
 }

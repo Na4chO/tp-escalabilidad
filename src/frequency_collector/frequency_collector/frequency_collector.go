@@ -26,6 +26,7 @@ type clientState struct {
 
 type FrequencyCollector struct {
 	running         atomic.Bool
+	topSize         int
 	clientStates    map[uint32]*clientState
 	wordsQueue      *common.PacketQueue[inner.AbstractWords]
 	partialTopQueue *common.PacketQueue[inner.PartialTop]
@@ -53,7 +54,11 @@ func NewFrequencyCollector(cfg *config.Config) (*FrequencyCollector, error) {
 		return nil, err
 	}
 
-	fc := &FrequencyCollector{wordsQueue: wordsQueue, partialTopQueue: partialTopQueue, resultQueue: resultQueue}
+	fc := &FrequencyCollector{
+		topSize:         cfg.TopSize,
+		wordsQueue:      wordsQueue,
+		partialTopQueue: partialTopQueue,
+		resultQueue:     resultQueue}
 	fc.running.Store(true)
 	return fc, nil
 }
@@ -113,7 +118,8 @@ func (fc *FrequencyCollector) closeMiddlewares() error {
 func (fc *FrequencyCollector) clientStateFor(clientId uint32) *clientState {
 	state, ok := fc.clientStates[clientId]
 	if !ok {
-		fc.clientStates[clientId] = &clientState{wordsFreq: make(map[string]*idiomsFrequency)}
+		state = &clientState{wordsFreq: make(map[string]*idiomsFrequency)}
+		fc.clientStates[clientId] = state
 	}
 	return state
 }
