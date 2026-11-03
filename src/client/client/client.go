@@ -61,9 +61,15 @@ func (client *Client) Run() error {
 	defer client.conn.Close()
 	go client.handleSignals()
 
-	// Envio de archivos .parquet
 	// Lanzar goroutine para esperar resultados
 
+	if err := client.sendArticles(); err != nil {
+		if !client.running.Load() {
+			slog.Info("Client stopped before sending all articles")
+			return nil
+		}
+		return fmt.Errorf("sending articles: %w", err)
+	}
 	return nil
 }
 
@@ -86,7 +92,11 @@ func (client *Client) sendArticles() error {
 		}
 	}
 
-	slog.Info("Dataset read",
+	if err := external.WriteEndOfFile(client.conn); err != nil {
+		return err
+	}
+
+	slog.Info("Dataset sent",
 		"files", len(files),
 		"articles", totalArticles,
 		"serialized_bytes", totalBytes,
