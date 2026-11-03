@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/Na4chO/tp-escalabilidad/common"
+	clientid "github.com/Na4chO/tp-escalabilidad/common/client_id"
 	"github.com/Na4chO/tp-escalabilidad/common/external"
 	"github.com/Na4chO/tp-escalabilidad/common/inner"
 	"github.com/Na4chO/tp-escalabilidad/common/middleware"
@@ -103,7 +104,7 @@ func (f *ImageFetcher) handleCandidatePacket(packet external.Packet[inner.Metada
 	ack()
 }
 
-func (f *ImageFetcher) handleCandidate(clientID uint32, metadata inner.Metadata) error {
+func (f *ImageFetcher) handleCandidate(clientID clientid.ID, metadata inner.Metadata) error {
 	if metadata.ImageUrl == "" {
 		slog.Debug("Ignoring article because image url is empty")
 		return nil

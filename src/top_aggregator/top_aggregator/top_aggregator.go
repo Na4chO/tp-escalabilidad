@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/Na4chO/tp-escalabilidad/common"
+	clientid "github.com/Na4chO/tp-escalabilidad/common/client_id"
 	"github.com/Na4chO/tp-escalabilidad/common/external"
 	"github.com/Na4chO/tp-escalabilidad/common/inner"
 	"github.com/Na4chO/tp-escalabilidad/common/middleware"
@@ -28,7 +29,7 @@ type clientState struct {
 type TopAggregator struct {
 	running         atomic.Bool
 	topSize         int
-	clientStates    map[uint32]*clientState
+	clientStates    map[clientid.ID]*clientState
 	partialTopQueue *common.PacketQueue[inner.PartialTop]
 	resultQueue     *common.PacketQueue[inner.QueryResult]
 }
@@ -49,7 +50,7 @@ func NewTopAggregator(cfg *config.Config) (*TopAggregator, error) {
 
 	ta := &TopAggregator{
 		topSize:         cfg.TopSize,
-		clientStates:    make(map[uint32]*clientState),
+		clientStates:    make(map[clientid.ID]*clientState),
 		partialTopQueue: partialTopQueue,
 		resultQueue:     resultQueue,
 	}
@@ -169,7 +170,7 @@ func (ta *TopAggregator) handleEOFPacket(packet external.Packet[inner.PartialTop
 	return ta.checkAndFinalize(packet.ClientID, state)
 }
 
-func (ta *TopAggregator) checkAndFinalize(clientID uint32, state *clientState) error {
+func (ta *TopAggregator) checkAndFinalize(clientID clientid.ID, state *clientState) error {
 	if !state.hasEOF || state.receivedCount < state.expectedTotal {
 		return nil
 	}
@@ -180,18 +181,18 @@ func (ta *TopAggregator) checkAndFinalize(clientID uint32, state *clientState) e
 	}
 
 	if err := ta.resultQueue.SendData(clientID, result); err != nil {
-		return fmt.Errorf("sending result for client %d: %w", clientID, err)
+		return fmt.Errorf("sending result for client %s: %w", clientID, err)
 	}
 
 	if err := ta.resultQueue.SendEOFWithPayload(clientID, inner.QueryResult{QueryType: inner.QueryTopWords}); err != nil {
-		return fmt.Errorf("sending EOF result for client %d: %w", clientID, err)
+		return fmt.Errorf("sending EOF result for client %s: %w", clientID, err)
 	}
 
 	delete(ta.clientStates, clientID)
 	return nil
 }
 
-func (ta *TopAggregator) clientStateFor(clientID uint32) *clientState {
+func (ta *TopAggregator) clientStateFor(clientID clientid.ID) *clientState {
 	state, exists := ta.clientStates[clientID]
 	if !exists {
 		state = &clientState{topWords: []inner.WordCount{}}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Na4chO/tp-escalabilidad/common"
+	clientid "github.com/Na4chO/tp-escalabilidad/common/client_id"
 	"github.com/Na4chO/tp-escalabilidad/common/external"
 	"github.com/Na4chO/tp-escalabilidad/common/inner"
 	"github.com/Na4chO/tp-escalabilidad/common/middleware"
@@ -114,7 +115,7 @@ func (mf *MetadataFilter) handleMetadataPacket(packet external.Packet[inner.Meta
 	ack()
 }
 
-func (mf *MetadataFilter) handleMetadata(clientID uint32, metadata inner.Metadata) error {
+func (mf *MetadataFilter) handleMetadata(clientID clientid.ID, metadata inner.Metadata) error {
 	date, ok := parseDateModified(metadata.DateModified)
 	if !ok {
 		slog.Warn("Invalid date modified", "date", metadata.DateModified)

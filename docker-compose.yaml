@@ -12,6 +12,7 @@ services:
       - SERVER_PORT=5678
       - MOM_HOST=rabbitmq
       - MOM_PORT=5672
+      - SERVER_ID=1
     ports:
       - "5678:5678"
 

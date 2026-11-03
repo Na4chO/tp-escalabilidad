@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/Na4chO/tp-escalabilidad/common"
+	clientid "github.com/Na4chO/tp-escalabilidad/common/client_id"
 	"github.com/Na4chO/tp-escalabilidad/common/external"
 	"github.com/Na4chO/tp-escalabilidad/common/inner"
 	"github.com/Na4chO/tp-escalabilidad/common/middleware"
@@ -18,6 +19,7 @@ import (
 )
 
 type Server struct {
+	id            string
 	registry      *clientregistry.ClientRegistry
 	handler       *articleHandler.ArticleHandler
 	metadataQueue *common.PacketQueue[inner.Metadata]
@@ -57,6 +59,7 @@ func NewServer(cfg config.Config) (*Server, error) {
 	}
 	handler := articleHandler.NewArticleHandler(metadataQueue, abstractQueue)
 	sv := &Server{
+		id:            cfg.ServerID,
 		registry:      clientregistry.NewClientRegistry(),
 		handler:       handler,
 		metadataQueue: metadataQueue,
@@ -94,13 +97,13 @@ func (s *Server) Run() error {
 
 		slog.Info("Client connected...")
 
-		clientID := s.registry.Add(clientregistry.ClientState{Conn: conn})
+		clientID := s.registry.Add(s.id, clientregistry.ClientState{Conn: conn})
 		go s.handleClientRequest(clientID, conn)
 	}
 
 	s.resultQueue.StopConsuming()
 	var conns []net.Conn
-	s.registry.WithLock(func(clients map[uint32]clientregistry.ClientState) {
+	s.registry.WithLock(func(clients map[clientid.ID]clientregistry.ClientState) {
 		for _, client := range clients {
 			conns = append(conns, client.Conn)
 		}
@@ -123,7 +126,7 @@ func (s *Server) handleSignals() {
 	s.listener.Close()
 }
 
-func (s *Server) handleClientRequest(clientID uint32, conn net.Conn) {
+func (s *Server) handleClientRequest(clientID clientid.ID, conn net.Conn) {
 loop:
 	for {
 		msgType, err := external.ReadMsgType(conn)
