@@ -81,6 +81,30 @@ services:
       - SERVER_HOST=server
       - SERVER_PORT=5678
 
+  abstract_word_counter:
+    build:
+      context: ./src
+      dockerfile: abstract_word_counter/Dockerfile
+    container_name: abstract_word_counter
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+
+  average_calculator:
+    build:
+      context: ./src
+      dockerfile: average_calculator/Dockerfile
+    container_name: average_calculator
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+
   rabbitmq:
     build:
       context: ./src/rabbitmq
