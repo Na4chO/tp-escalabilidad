@@ -15,6 +15,35 @@ services:
     ports:
       - "5678:5678"
 
+  metadata_filter:
+    build:
+      context: ./src
+      dockerfile: metadata_filter/Dockerfile
+    container_name: metadata_filter
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+    ports:
+      - "5678:5678"
+
+  image_fetcher:
+    build:
+      context: ./src
+      dockerfile: image_fetcher/Dockerfile
+    container_name: image_fetcher
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+      - WIKIMEDIA_USER_AGENT=SistemasDistribuidos-Grupo29/1.0
+    ports:
+      - "5678:5678"
+
   frequency_collector:
     build:
       context: ./src

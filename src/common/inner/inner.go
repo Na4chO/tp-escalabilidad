@@ -50,4 +50,7 @@ type QueryResult struct {
 	TopWords          []WordCount `json:"topWords,omitempty"`
 	Url               string      `json:"url,omitempty"`
 	WordCount         uint32      `json:"wordCount,omitempty"`
+	DateModified      string      `json:"dateModified,omitempty"`
+	Name              string      `json:"name,omitempty"`
+	Image             []byte      `json:"image,omitempty"`
 }
