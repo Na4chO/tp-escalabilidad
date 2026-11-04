@@ -4,8 +4,8 @@ import (
 	"log/slog"
 	"os"
 
+	p "github.com/Na4chO/tp-escalabilidad/abstract_preprocessing/abstract_preprocessing"
 	"github.com/Na4chO/tp-escalabilidad/abstract_preprocessing/config"
-	p "github.com/Na4chO/tp-escalabilidad/abstract_preprocessing/preprocessing"
 )
 
 func run() int {
@@ -15,11 +15,13 @@ func run() int {
 		return 1
 	}
 
-	node, err := p.NewPreprocessing(cfg)
+	node, err := p.NewAbstractPreprocessing(cfg)
 	if err != nil {
 		slog.Error("While creating Abstract Preprocessing", "err", err)
 		return 1
 	}
+	defer node.Close()
+
 	if err := node.Run(); err != nil {
 		slog.Error("Abstract Preprocessing stopped with error", "err", err)
 		return 1

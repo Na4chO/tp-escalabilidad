@@ -1,14 +1,12 @@
 package frequency_collector
 
 import (
-	"cmp"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
-	"slices"
-	"sync/atomic"
+	"sync"
 	"syscall"
 
 	"github.com/Na4chO/tp-escalabilidad/common"
@@ -16,28 +14,21 @@ import (
 	"github.com/Na4chO/tp-escalabilidad/common/external"
 	"github.com/Na4chO/tp-escalabilidad/common/inner"
 	"github.com/Na4chO/tp-escalabilidad/common/middleware"
+	"github.com/Na4chO/tp-escalabilidad/common/synchronizer"
 	"github.com/Na4chO/tp-escalabilidad/frequency_collector/config"
 )
 
-type idiomsFrequency struct {
-	EnglishFrequency uint32
-	FrenchFrequency  uint32
-}
-
-type clientState struct {
-	wordsFreq     map[string]*idiomsFrequency
-	receivedCount uint32
-	expectedTotal uint32
-	hasEOF        bool
-}
-
 type FrequencyCollector struct {
-	running         atomic.Bool
 	topSize         int
-	clientStates    map[clientid.ID]*clientState
 	wordsQueue      *common.PacketQueue[inner.AbstractWords]
 	partialTopQueue *common.PacketQueue[inner.PartialTop]
 	resultQueue     *common.PacketQueue[inner.QueryResult]
+	partialTopSync  *synchronizer.Synchronizer
+	resultsSync     *synchronizer.Synchronizer
+
+	mu           sync.Mutex
+	clientStates map[clientid.ID]*clientState
+	finished     map[clientid.ID]map[syncTarget]bool
 }
 
 func NewFrequencyCollector(cfg *config.Config) (*FrequencyCollector, error) {
@@ -63,45 +54,105 @@ func NewFrequencyCollector(cfg *config.Config) (*FrequencyCollector, error) {
 
 	fc := &FrequencyCollector{
 		topSize:         cfg.TopSize,
-		clientStates:    make(map[clientid.ID]*clientState),
 		wordsQueue:      wordsQueue,
 		partialTopQueue: partialTopQueue,
 		resultQueue:     resultQueue,
+		clientStates:    make(map[clientid.ID]*clientState),
+		finished:        make(map[clientid.ID]map[syncTarget]bool),
 	}
-	fc.running.Store(true)
+
+	instanceID, err := os.Hostname()
+	if err != nil {
+		_ = fc.Close()
+		return nil, fmt.Errorf("getting instance id: %w", err)
+	}
+
+	fc.partialTopSync, err = fc.createSynchronizer(instanceID, partialTopsSyncExchange, syncPartialTops, connSettings)
+	if err != nil {
+		_ = fc.Close()
+		return nil, fmt.Errorf("creating partial tops synchronizer: %w", err)
+	}
+
+	fc.resultsSync, err = fc.createSynchronizer(instanceID, resultsSyncExchange, syncResults, connSettings)
+	if err != nil {
+		_ = fc.Close()
+		return nil, fmt.Errorf("creating results synchronizer: %w", err)
+	}
+
 	return fc, nil
+}
+
+func (fc *FrequencyCollector) createSynchronizer(instanceID, exchangeName string, target syncTarget, connSettings middleware.ConnSettings) (*synchronizer.Synchronizer, error) {
+	return synchronizer.NewSynchronizer(
+		instanceID,
+		exchangeName,
+		connSettings,
+		func(clientID clientid.ID) { fc.onSynced(clientID, target) },
+		func(clientID clientid.ID, total uint32) { fc.onFinished(clientID, target, total) },
+	)
 }
 
 func (fc *FrequencyCollector) Run() error {
 	go fc.handleSignals()
 
-	err := errors.Join(
-		fc.wordsQueue.StartConsuming(func(packet external.Packet[inner.AbstractWords], ack, nack func()) {
-			fc.handleAbstractWordsPacket(packet, ack, nack)
-		}),
-		fc.closeMiddlewares(),
-	)
+	errs := make(chan error, 3)
+	go func() { errs <- fc.wordsQueue.StartConsuming(fc.handleAbstractWordsPacket) }()
+	go func() { errs <- fc.partialTopSync.StartConsuming() }()
+	go func() { errs <- fc.resultsSync.StartConsuming() }()
 
-	if fc.running.Load() {
-		return err
+	var firstErr error
+	for range 3 {
+		if err := <-errs; err != nil && firstErr == nil {
+			firstErr = err
+			fc.Stop()
+		}
 	}
 
-	return nil
+	return errors.Join(firstErr, fc.Close())
+}
+
+func (fc *FrequencyCollector) Stop() {
+	if fc.wordsQueue != nil {
+		_ = fc.wordsQueue.StopConsuming()
+	}
+	if fc.partialTopSync != nil {
+		_ = fc.partialTopSync.StopConsuming()
+	}
+	if fc.resultsSync != nil {
+		_ = fc.resultsSync.StopConsuming()
+	}
+}
+
+func (fc *FrequencyCollector) Close() error {
+	var errs []error
+	if fc.wordsQueue != nil {
+		errs = append(errs, fc.wordsQueue.Close())
+	}
+	if fc.partialTopQueue != nil {
+		errs = append(errs, fc.partialTopQueue.Close())
+	}
+	if fc.resultQueue != nil {
+		errs = append(errs, fc.resultQueue.Close())
+	}
+	if fc.partialTopSync != nil {
+		errs = append(errs, fc.partialTopSync.Close())
+	}
+	if fc.resultsSync != nil {
+		errs = append(errs, fc.resultsSync.Close())
+	}
+	return errors.Join(errs...)
 }
 
 func (fc *FrequencyCollector) handleAbstractWordsPacket(packet external.Packet[inner.AbstractWords], ack func(), nack func()) {
+	var err error
 	if packet.IsEof {
-		if err := fc.handleEOFPacket(packet); err != nil {
-			slog.Error("While handling EOF packet", "err", err)
-			nack()
-			return
-		}
-		ack()
-		return
+		err = fc.handleEOFPacket(packet)
+	} else {
+		err = fc.handleAbstractWords(packet)
 	}
 
-	if err := fc.handleAbstractWords(packet); err != nil {
-		slog.Error("While handling abstract words message", "err", err)
+	if err != nil {
+		slog.Error("While handling abstract words packet", "client", packet.ClientID, "isEOF", packet.IsEof, "err", err)
 		nack()
 		return
 	}
@@ -113,134 +164,25 @@ func (fc *FrequencyCollector) handleSignals() {
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	<-signals
 	slog.Info("SIGTERM signal received")
-	fc.running.Store(false)
-	_ = fc.wordsQueue.StopConsuming()
-}
-
-func (fc *FrequencyCollector) closeMiddlewares() error {
-	return errors.Join(
-		fc.wordsQueue.StopConsuming(),
-		fc.wordsQueue.Close(),
-		fc.partialTopQueue.Close(),
-		fc.resultQueue.Close(),
-	)
-}
-
-func (fc *FrequencyCollector) clientStateFor(clientId clientid.ID) *clientState {
-	state, ok := fc.clientStates[clientId]
-	if !ok {
-		state = &clientState{wordsFreq: make(map[string]*idiomsFrequency)}
-		fc.clientStates[clientId] = state
-	}
-	return state
+	fc.Stop()
 }
 
 func (fc *FrequencyCollector) handleAbstractWords(packet external.Packet[inner.AbstractWords]) error {
-	var intersections []string
-	state := fc.clientStateFor(packet.ClientID)
-
-	if packet.Payload.InLanguage != "en" && packet.Payload.InLanguage != "fr" {
-		state.receivedCount++
-		return fc.checkAndFinalize(packet.ClientID, state)
-	}
-
-	for _, word := range packet.Payload.Words {
-		wordFreq, ok := state.wordsFreq[word]
-		if !ok {
-			wordFreq = &idiomsFrequency{}
-			state.wordsFreq[word] = wordFreq
-		}
-		if isIntersection(packet.Payload.InLanguage, wordFreq) {
-			intersections = append(intersections, word)
-		}
-
-		if packet.Payload.InLanguage == "en" {
-			wordFreq.EnglishFrequency++
-		} else if packet.Payload.InLanguage == "fr" {
-			wordFreq.FrenchFrequency++
-		}
-	}
+	intersections := fc.updateFrequencies(packet.ClientID, packet.Payload)
 
 	if len(intersections) > 0 {
 		if err := fc.sendIntersections(packet.ClientID, intersections); err != nil {
 			return err
 		}
+		fc.resultsSync.Sent(packet.ClientID)
 	}
 
-	state.receivedCount++
-	return fc.checkAndFinalize(packet.ClientID, state)
-}
-
-func isIntersection(inLanguage string, wordFreq *idiomsFrequency) bool {
-	switch inLanguage {
-	case "en":
-		return wordFreq.EnglishFrequency == 0 && wordFreq.FrenchFrequency > 0
-	case "fr":
-		return wordFreq.FrenchFrequency == 0 && wordFreq.EnglishFrequency > 0
-	default:
-		return false
-	}
-}
-
-func (fc *FrequencyCollector) sendIntersections(clientId clientid.ID, intersections []string) error {
-	return fc.resultQueue.SendData(clientId, inner.QueryResult{
-		QueryType:         inner.QueryIntersections,
-		IntersectionWords: intersections,
-	})
+	return fc.markProcessed(packet.ClientID)
 }
 
 func (fc *FrequencyCollector) handleEOFPacket(packet external.Packet[inner.AbstractWords]) error {
-	state := fc.clientStateFor(packet.ClientID)
-	state.hasEOF = true
-	state.expectedTotal = packet.Total
-
-	return fc.checkAndFinalize(packet.ClientID, state)
-}
-
-func (fc *FrequencyCollector) checkAndFinalize(clientID clientid.ID, state *clientState) error {
-	if !state.hasEOF || state.receivedCount < state.expectedTotal {
-		return nil
-	}
-
-	top := fc.topWords(state)
-
-	if len(top) > 0 {
-		if err := fc.partialTopQueue.SendData(clientID, inner.PartialTop{Top: top}); err != nil {
-			return fmt.Errorf("sending partial top for client %s: %w", clientID, err)
-		}
-	}
-
-	if err := fc.partialTopQueue.SendEOF(clientID); err != nil {
-		return fmt.Errorf("sending partial top EOF for client %s: %w", clientID, err)
-	}
-
-	if err := fc.resultQueue.SendEOFWithPayload(clientID, inner.QueryResult{QueryType: inner.QueryIntersections}); err != nil {
-		return fmt.Errorf("sending intersections EOF for client %s: %w", clientID, err)
-	}
-
-	delete(fc.clientStates, clientID)
-	return nil
-}
-
-func (fc *FrequencyCollector) topWords(state *clientState) []inner.WordCount {
-	top := make([]inner.WordCount, 0, len(state.wordsFreq))
-	for word, freq := range state.wordsFreq {
-		top = append(top, inner.WordCount{
-			Word:  word,
-			Count: freq.EnglishFrequency + freq.FrenchFrequency,
-		})
-	}
-
-	slices.SortFunc(top, func(a, b inner.WordCount) int {
-		if byCount := cmp.Compare(b.Count, a.Count); byCount != 0 {
-			return byCount
-		}
-		return cmp.Compare(a.Word, b.Word)
-	})
-
-	if len(top) > fc.topSize {
-		top = top[:fc.topSize]
-	}
-
-	return top
+	return errors.Join(
+		fc.partialTopSync.EndOfData(packet.ClientID, packet.Total),
+		fc.resultsSync.EndOfData(packet.ClientID, packet.Total),
+	)
 }

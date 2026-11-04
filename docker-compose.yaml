@@ -49,7 +49,6 @@ services:
     build:
       context: ./src
       dockerfile: frequency_collector/Dockerfile
-    container_name: frequency_collector
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -110,7 +109,6 @@ services:
     build:
       context: ./src
       dockerfile: abstract_preprocessing/Dockerfile
-    container_name: abstract_preprocessing
     depends_on:
       rabbitmq:
         condition: service_healthy

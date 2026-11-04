@@ -1,4 +1,4 @@
-package preprocessing
+package abstract_preprocessing
 
 import (
 	"regexp"
