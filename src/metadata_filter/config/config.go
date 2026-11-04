@@ -7,8 +7,9 @@ import (
 )
 
 type Config struct {
-	MomHost string
-	MomPort int
+	MomHost    string
+	MomPort    int
+	InstanceID string
 }
 
 func NewConfig() (*Config, error) {
@@ -22,8 +23,14 @@ func NewConfig() (*Config, error) {
 		return nil, errors.New("MOM_HOST environment variable is required")
 	}
 
+	instanceID := os.Getenv("INSTANCE_ID")
+	if instanceID == "" {
+		return nil, errors.New("INSTANCE_ID environment variable is required")
+	}
+
 	return &Config{
-		MomHost: momHost,
-		MomPort: momPort,
+		MomHost:    momHost,
+		MomPort:    momPort,
+		InstanceID: instanceID,
 	}, nil
 }

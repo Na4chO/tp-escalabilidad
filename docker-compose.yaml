@@ -82,6 +82,9 @@ services:
     environment:
       - SERVER_HOST=server
       - SERVER_PORT=5678
+      - INPUT_PATH=/data
+    volumes:
+      - ./data:/data:ro
 
   abstract_word_counter:
     build:
