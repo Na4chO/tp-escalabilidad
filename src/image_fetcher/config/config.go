@@ -7,9 +7,10 @@ import (
 )
 
 type Config struct {
-	MomHost   string
-	MomPort   int
-	UserAgent string
+	MomHost        string
+	MomPort        int
+	UserAgent      string
+	ImageCacheSize int
 }
 
 func NewConfig() (*Config, error) {
@@ -28,9 +29,15 @@ func NewConfig() (*Config, error) {
 		return nil, errors.New("WIKIMEDIA_USER_AGENT environment variable is required")
 	}
 
+	imageCacheSize, err := strconv.Atoi(os.Getenv("IMAGE_CACHE_SIZE"))
+	if err != nil {
+		return nil, errors.New("IMAGE_CACHE_SIZE environment variable is required")
+	}
+
 	return &Config{
-		MomHost:   momHost,
-		MomPort:   momPort,
-		UserAgent: userAgent,
+		MomHost:        momHost,
+		MomPort:        momPort,
+		UserAgent:      userAgent,
+		ImageCacheSize: imageCacheSize,
 	}, nil
 }

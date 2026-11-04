@@ -22,6 +22,7 @@ import (
 type ImageFetcher struct {
 	resultQueue     *common.PacketQueue[inner.QueryResult]
 	candidatesQueue *common.PacketQueue[inner.Metadata]
+	imageCache      *imageCache
 	running         atomic.Bool
 	userAgent       string
 	httpClient      *http.Client
@@ -44,6 +45,7 @@ func NewImageFetcher(cfg *config.Config) (*ImageFetcher, error) {
 	f := &ImageFetcher{
 		resultQueue:     resultQueue,
 		candidatesQueue: candidatesQueue,
+		imageCache:      NewImageCache(cfg.ImageCacheSize),
 		userAgent:       cfg.UserAgent,
 		httpClient:      http.DefaultClient,
 	}
@@ -109,10 +111,22 @@ func (f *ImageFetcher) handleCandidate(clientID clientid.ID, metadata inner.Meta
 		slog.Debug("Ignoring article because image url is empty")
 		return nil
 	}
+	if image, ok := f.imageCache.Get(metadata.ImageUrl); ok {
+		return f.sendImageResult(clientID, metadata, image)
+	}
 	image, err := f.fetchImage(metadata.ImageUrl)
 	if err != nil {
 		return err
 	}
+	return f.resultQueue.SendData(clientID, inner.QueryResult{
+		QueryType: 2,
+		Name:      metadata.Name,
+		Url:       metadata.Url,
+		Image:     image,
+	})
+}
+
+func (f *ImageFetcher) sendImageResult(clientID clientid.ID, metadata inner.Metadata, image []byte) error {
 	return f.resultQueue.SendData(clientID, inner.QueryResult{
 		QueryType: 2,
 		Name:      metadata.Name,
