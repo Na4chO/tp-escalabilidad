@@ -7,8 +7,10 @@ import (
 )
 
 type Config struct {
-	MomHost string
-	MomPort int
+	MomHost                  string
+	MomPort                  int
+	FrequencyCollectorAmount int
+	AverageCalculatorAmount  int
 }
 
 func NewConfig() (*Config, error) {
@@ -22,8 +24,28 @@ func NewConfig() (*Config, error) {
 		return nil, errors.New("MOM_HOST environment variable is required")
 	}
 
+	frequencyCollectorAmount, err := loadAmount("FREQUENCY_COLLECTOR_AMOUNT")
+	if err != nil {
+		return nil, err
+	}
+
+	averageCalculatorAmount, err := loadAmount("AVERAGE_CALCULATOR_AMOUNT")
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
-		MomHost: momHost,
-		MomPort: momPort,
+		MomHost:                  momHost,
+		MomPort:                  momPort,
+		FrequencyCollectorAmount: frequencyCollectorAmount,
+		AverageCalculatorAmount:  averageCalculatorAmount,
 	}, nil
+}
+
+func loadAmount(name string) (int, error) {
+	value, err := strconv.Atoi(os.Getenv(name))
+	if err != nil || value < 1 {
+		return 0, errors.New(name + " environment variable is required and must be a positive number")
+	}
+	return value, nil
 }

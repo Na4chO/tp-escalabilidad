@@ -7,9 +7,11 @@ import (
 )
 
 type Config struct {
-	TopSize int
-	MomHost string
-	MomPort int
+	TopSize             int
+	ID                  int
+	TopAggregatorAmount int
+	MomHost             string
+	MomPort             int
 }
 
 func NewConfig() (*Config, error) {
@@ -19,6 +21,16 @@ func NewConfig() (*Config, error) {
 	}
 	if topSize <= 0 {
 		return nil, errors.New("TOP_SIZE must be greater than zero")
+	}
+
+	id, err := strconv.Atoi(os.Getenv("ID"))
+	if err != nil || id < 0 {
+		return nil, errors.New("ID environment variable is required and must be a non-negative number")
+	}
+
+	topAggregatorAmount, err := strconv.Atoi(os.Getenv("TOP_AGGREGATOR_AMOUNT"))
+	if err != nil || topAggregatorAmount < 1 {
+		return nil, errors.New("TOP_AGGREGATOR_AMOUNT environment variable is required and must be a positive number")
 	}
 
 	momPort, err := strconv.Atoi(os.Getenv("MOM_PORT"))
@@ -32,8 +44,10 @@ func NewConfig() (*Config, error) {
 	}
 
 	return &Config{
-		TopSize: topSize,
-		MomHost: momHost,
-		MomPort: momPort,
+		TopSize:             topSize,
+		ID:                  id,
+		TopAggregatorAmount: topAggregatorAmount,
+		MomHost:             momHost,
+		MomPort:             momPort,
 	}, nil
 }

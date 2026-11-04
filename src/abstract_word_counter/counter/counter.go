@@ -45,7 +45,7 @@ func NewCounter(connSettings middleware.ConnSettings) (*Counter, error) {
 
 	c := &Counter{countsDir: countsDir, pending: map[clientid.ID]*pending{}}
 
-	input, err := common.NewPacketQueue[inner.AbstractWordCount]("abstracts_from_2021", connSettings)
+	input, err := common.NewPacketQueue[inner.AbstractWordCount](common.QueueAbstractsFrom2021, connSettings)
 	if err != nil {
 		return nil, fmt.Errorf("creating input queue: %w", err)
 	}

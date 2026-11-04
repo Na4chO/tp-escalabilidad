@@ -1,39 +1,23 @@
 package main
 
 import (
-	"errors"
 	"log/slog"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 
 	"github.com/Na4chO/tp-escalabilidad/average_calculator/calculator"
-	"github.com/Na4chO/tp-escalabilidad/common/middleware"
+	"github.com/Na4chO/tp-escalabilidad/average_calculator/config"
 )
 
-func loadConfig() (middleware.ConnSettings, error) {
-	momHost := os.Getenv("MOM_HOST")
-	if momHost == "" {
-		return middleware.ConnSettings{}, errors.New("MOM_HOST environment variable is required")
-	}
-
-	momPort, err := strconv.Atoi(os.Getenv("MOM_PORT"))
-	if err != nil {
-		return middleware.ConnSettings{}, errors.New("MOM_PORT environment variable is required and must be a number")
-	}
-
-	return middleware.ConnSettings{Hostname: momHost, Port: momPort}, nil
-}
-
 func run() int {
-	connSettings, err := loadConfig()
+	cfg, err := config.NewConfig()
 	if err != nil {
 		slog.Error("While loading config", "err", err)
 		return 1
 	}
 
-	calc, err := calculator.NewCalculator(connSettings)
+	calc, err := calculator.NewCalculator(cfg)
 	if err != nil {
 		slog.Error("While initializing average calculator", "err", err)
 		return 1
@@ -45,7 +29,7 @@ func run() int {
 		signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 		<-signals
 		slog.Info("SIGTERM signal received")
-		calc.Stop()
+		_ = calc.Stop()
 	}()
 
 	slog.Info("Average calculator running")

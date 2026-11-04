@@ -27,32 +27,33 @@ type clientState struct {
 }
 
 type TopAggregator struct {
-	running         atomic.Bool
-	topSize         int
-	clientStates    map[clientid.ID]*clientState
-	partialTopQueue *common.PacketQueue[inner.PartialTop]
-	resultQueue     *common.PacketQueue[inner.QueryResult]
+	running            atomic.Bool
+	topSize            int
+	clientStates       map[clientid.ID]*clientState
+	partialTopExchange middleware.Router
+	resultQueue        *common.PacketQueue[inner.QueryResult]
 }
 
 func NewTopAggregator(cfg *config.Config) (*TopAggregator, error) {
 	connSettings := middleware.ConnSettings{Hostname: cfg.MomHost, Port: cfg.MomPort}
 
-	partialTopQueue, err := common.NewPacketQueue[inner.PartialTop](common.QueuePartialTops, connSettings)
+	inputKey := common.PartitionKey(common.ExchangePartialTops, cfg.ID)
+	partialTopExchange, err := middleware.CreateExchangeMiddleware(common.ExchangePartialTops, []string{inputKey}, connSettings)
 	if err != nil {
 		return nil, err
 	}
 
 	resultQueue, err := common.NewPacketQueue[inner.QueryResult](common.QueueQueryResult, connSettings)
 	if err != nil {
-		partialTopQueue.Close()
+		partialTopExchange.Close()
 		return nil, err
 	}
 
 	ta := &TopAggregator{
-		topSize:         cfg.TopSize,
-		clientStates:    make(map[clientid.ID]*clientState),
-		partialTopQueue: partialTopQueue,
-		resultQueue:     resultQueue,
+		topSize:            cfg.TopSize,
+		clientStates:       make(map[clientid.ID]*clientState),
+		partialTopExchange: partialTopExchange,
+		resultQueue:        resultQueue,
 	}
 	ta.running.Store(true)
 	return ta, nil
@@ -62,9 +63,7 @@ func (ta *TopAggregator) Run() error {
 	go ta.handleSignals()
 
 	err := errors.Join(
-		ta.partialTopQueue.StartConsuming(func(packet external.Packet[inner.PartialTop], ack, nack func()) {
-			ta.handlePartialTopPacket(packet, ack, nack)
-		}),
+		ta.partialTopExchange.StartConsuming(ta.handlePartialTopMessage),
 		ta.closeMiddlewares(),
 	)
 
@@ -81,15 +80,26 @@ func (ta *TopAggregator) handleSignals() {
 	<-signals
 	slog.Info("SIGTERM signal received")
 	ta.running.Store(false)
-	_ = ta.partialTopQueue.StopConsuming()
+	_ = ta.partialTopExchange.StopConsuming()
 }
 
 func (ta *TopAggregator) closeMiddlewares() error {
 	return errors.Join(
-		ta.partialTopQueue.StopConsuming(),
-		ta.partialTopQueue.Close(),
+		ta.partialTopExchange.StopConsuming(),
+		ta.partialTopExchange.Close(),
 		ta.resultQueue.Close(),
 	)
+}
+
+func (ta *TopAggregator) handlePartialTopMessage(msg middleware.Message, ack func(), nack func()) {
+	packet, err := external.DecodePacket[inner.PartialTop]([]byte(msg.Body))
+	if err != nil {
+		slog.Error("Discarding partial top message", "err", err)
+		nack()
+		return
+	}
+
+	ta.handlePartialTopPacket(packet, ack, nack)
 }
 
 func (ta *TopAggregator) handlePartialTopPacket(packet external.Packet[inner.PartialTop], ack func(), nack func()) {

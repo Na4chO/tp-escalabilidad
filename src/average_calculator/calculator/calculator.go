@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/Na4chO/tp-escalabilidad/average_calculator/config"
+	"github.com/Na4chO/tp-escalabilidad/common"
 	clientid "github.com/Na4chO/tp-escalabilidad/common/client_id"
 	"github.com/Na4chO/tp-escalabilidad/common/external"
 	"github.com/Na4chO/tp-escalabilidad/common/inner"
@@ -15,16 +17,16 @@ type clientStats struct {
 	abstracts uint64
 }
 
-const allClientsKey = "#"
-
 type Calculator struct {
 	input    middleware.Router
 	averages middleware.Router
 	clients  map[clientid.ID]*clientStats
 }
 
-func NewCalculator(connSettings middleware.ConnSettings) (*Calculator, error) {
-	input, err := middleware.CreateExchangeMiddleware("abstracts_until_2020", []string{allClientsKey}, connSettings)
+func NewCalculator(cfg *config.Config) (*Calculator, error) {
+	connSettings := middleware.ConnSettings{Hostname: cfg.MomHost, Port: cfg.MomPort}
+	inputKey := common.PartitionKey(common.ExchangeAbstractsUntil2020, cfg.ID)
+	input, err := middleware.CreateExchangeMiddleware(common.ExchangeAbstractsUntil2020, []string{inputKey}, connSettings)
 	if err != nil {
 		return nil, fmt.Errorf("creating input exchange: %w", err)
 	}
