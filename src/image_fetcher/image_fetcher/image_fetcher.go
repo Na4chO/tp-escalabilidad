@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"sync/atomic"
 	"syscall"
 
@@ -19,6 +20,12 @@ import (
 	"github.com/Na4chO/tp-escalabilidad/image_fetcher/config"
 )
 
+type clientState struct {
+	receivedCount uint32
+	expectedTotal uint32
+	hasEOF        bool
+}
+
 type ImageFetcher struct {
 	resultQueue     *common.PacketQueue[inner.QueryResult]
 	candidatesQueue *common.PacketQueue[inner.Metadata]
@@ -26,6 +33,8 @@ type ImageFetcher struct {
 	running         atomic.Bool
 	userAgent       string
 	httpClient      *http.Client
+	mu              sync.Mutex
+	clientStates    map[clientid.ID]*clientState
 }
 
 func NewImageFetcher(cfg *config.Config) (*ImageFetcher, error) {
@@ -48,6 +57,7 @@ func NewImageFetcher(cfg *config.Config) (*ImageFetcher, error) {
 		imageCache:      NewImageCache(cfg.ImageCacheSize),
 		userAgent:       cfg.UserAgent,
 		httpClient:      http.DefaultClient,
+		clientStates:    make(map[clientid.ID]*clientState),
 	}
 	f.running.Store(true)
 	return f, nil
@@ -109,21 +119,45 @@ func (f *ImageFetcher) handleCandidatePacket(packet external.Packet[inner.Metada
 func (f *ImageFetcher) handleCandidate(clientID clientid.ID, metadata inner.Metadata) error {
 	if metadata.ImageUrl == "" {
 		slog.Debug("Ignoring article because image url is empty")
-		return nil
+		f.mu.Lock()
+		state := f.clientStates[clientID]
+		state.receivedCount++
+		f.mu.Unlock()
+		return f.checkAndFinalize(clientID)
 	}
-	if image, ok := f.imageCache.Get(metadata.ImageUrl); ok {
-		return f.sendImageResult(clientID, metadata, image)
+	var image []byte
+	var err error
+	var inCache bool
+	if image, inCache = f.imageCache.Get(metadata.ImageUrl); !inCache {
+		image, err = f.fetchImage(metadata.ImageUrl)
+		if err != nil {
+			return err
+		}
+		f.imageCache.Put(metadata.ImageUrl, image)
 	}
-	image, err := f.fetchImage(metadata.ImageUrl)
-	if err != nil {
-		return err
-	}
-	f.imageCache.Put(metadata.ImageUrl, image)
 	return f.resultQueue.SendData(clientID, inner.QueryResult{
 		QueryType: 2,
 		Name:      metadata.Name,
 		Url:       metadata.Url,
 		Image:     image,
+	})
+}
+
+func (f *ImageFetcher) checkAndFinalize(clientID clientid.ID) error {
+	f.mu.Lock()
+	state := f.clientStates[clientID]
+	if state == nil || !state.hasEOF || state.receivedCount < state.expectedTotal {
+		f.mu.Unlock()
+		return nil
+	}
+	delete(f.clientStates, clientID)
+	f.mu.Unlock()
+
+	return f.resultQueue.Send(external.Packet[inner.QueryResult]{
+		ClientID: clientID,
+		IsEof:    true,
+		Total:    state.receivedCount,
+		Payload:  inner.QueryResult{QueryType: 2},
 	})
 }
 
@@ -156,4 +190,23 @@ func (f *ImageFetcher) fetchImage(url string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to read image body: %w", err)
 	}
 	return imgBytes, nil
+}
+
+func (f *ImageFetcher) handleEOFPacket(packet external.Packet[inner.Metadata]) error {
+	f.mu.Lock()
+	state := f.clientStateFor(packet.ClientID)
+	state.hasEOF = true
+	state.expectedTotal = packet.Total
+	f.mu.Unlock()
+
+	return f.checkAndFinalize(packet.ClientID)
+}
+
+func (f *ImageFetcher) clientStateFor(clientID clientid.ID) *clientState {
+	state, ok := f.clientStates[clientID]
+	if !ok {
+		state = &clientState{}
+		f.clientStates[clientID] = state
+	}
+	return state
 }
