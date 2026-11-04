@@ -2,10 +2,10 @@ package common
 
 const (
 	QueueAbstract              = "abstract"
-	QueueAbstractWords         = "abstractWords"
-	QueueAbstractsFrom2021     = "abstracts_from_2021"
+	ExchangeAbstractWords      = "abstractWords"
+	QueueAbstractsFrom2021     = "abstractsFrom2021"
 	QueueMetadata              = "metadata"
-	QueuePartialTops           = "partialTops"
+	ExchangePartialTops        = "partialTops"
 	QueueQueryResult           = "queryResult"
-	ExchangeAbstractsUntil2020 = "abstracts_until_2020"
+	ExchangeAbstractsUntil2020 = "abstractsUntil2020"
 )

@@ -21,13 +21,15 @@ import (
 )
 
 type AbstractPreprocessing struct {
-	inputQueue    *common.PacketQueue[inner.Abstract]
-	wordsQueue    *common.PacketQueue[inner.AbstractWords]
-	until2020     middleware.Router
-	from2021      *common.PacketQueue[inner.AbstractWordCount]
-	wordsSync     *synchronizer.Synchronizer
-	from2021Sync  *synchronizer.Synchronizer
-	until2020Sync *synchronizer.Synchronizer
+	inputQueue               *common.PacketQueue[inner.Abstract]
+	wordsExchange            middleware.Router
+	until2020                middleware.Router
+	from2021                 *common.PacketQueue[inner.AbstractWordCount]
+	frequencyCollectorAmount int
+	averageCalculatorAmount  int
+	wordsSync                *synchronizer.Synchronizer
+	from2021Sync             *synchronizer.Synchronizer
+	until2020Sync            *synchronizer.Synchronizer
 
 	mu       sync.Mutex
 	finished map[clientid.ID]map[syncTarget]bool
@@ -41,7 +43,7 @@ func NewAbstractPreprocessing(cfg *config.Config) (*AbstractPreprocessing, error
 		return nil, err
 	}
 
-	wordsQueue, err := common.NewPacketQueue[inner.AbstractWords](common.QueueAbstractWords, connSettings)
+	wordsExchange, err := middleware.CreateExchangeMiddleware(common.ExchangeAbstractWords, nil, connSettings)
 	if err != nil {
 		inputQueue.Close()
 		return nil, err
@@ -50,24 +52,26 @@ func NewAbstractPreprocessing(cfg *config.Config) (*AbstractPreprocessing, error
 	until2020, err := middleware.CreateExchangeMiddleware(common.ExchangeAbstractsUntil2020, nil, connSettings)
 	if err != nil {
 		inputQueue.Close()
-		wordsQueue.Close()
+		wordsExchange.Close()
 		return nil, err
 	}
 
 	from2021, err := common.NewPacketQueue[inner.AbstractWordCount](common.QueueAbstractsFrom2021, connSettings)
 	if err != nil {
 		inputQueue.Close()
-		wordsQueue.Close()
+		wordsExchange.Close()
 		until2020.Close()
 		return nil, err
 	}
 
 	p := &AbstractPreprocessing{
-		inputQueue: inputQueue,
-		wordsQueue: wordsQueue,
-		until2020:  until2020,
-		from2021:   from2021,
-		finished:   make(map[clientid.ID]map[syncTarget]bool),
+		inputQueue:               inputQueue,
+		wordsExchange:            wordsExchange,
+		until2020:                until2020,
+		from2021:                 from2021,
+		frequencyCollectorAmount: cfg.FrequencyCollectorAmount,
+		averageCalculatorAmount:  cfg.AverageCalculatorAmount,
+		finished:                 make(map[clientid.ID]map[syncTarget]bool),
 	}
 
 	instanceID, err := os.Hostname()
@@ -147,8 +151,8 @@ func (p *AbstractPreprocessing) Close() error {
 	if p.inputQueue != nil {
 		errs = append(errs, p.inputQueue.Close())
 	}
-	if p.wordsQueue != nil {
-		errs = append(errs, p.wordsQueue.Close())
+	if p.wordsExchange != nil {
+		errs = append(errs, p.wordsExchange.Close())
 	}
 	if p.until2020 != nil {
 		errs = append(errs, p.until2020.Close())
@@ -195,22 +199,45 @@ func (p *AbstractPreprocessing) handlePacket(packet external.Packet[inner.Abstra
 func (p *AbstractPreprocessing) handleAbstract(packet external.Packet[inner.Abstract]) error {
 	words := extractWords(packet.Payload.Abstract)
 
-	if err := p.wordsQueue.Send(external.Packet[inner.AbstractWords]{
-		ClientID: packet.ClientID,
-		Payload: inner.AbstractWords{
-			Words:      words,
-			InLanguage: packet.Payload.InLanguage,
-		},
-	}); err != nil {
-		return fmt.Errorf("sending abstract words: %w", err)
+	if err := p.sendAbstractWords(packet.ClientID, packet.Payload.InLanguage, words); err != nil {
+		return err
 	}
-	p.wordsSync.Sent(packet.ClientID)
 
 	if err := p.handleWordCount(packet, uint32(len(words))); err != nil {
 		return err
 	}
 
 	return p.markProcessed(packet.ClientID)
+}
+
+func (p *AbstractPreprocessing) sendAbstractWords(clientID clientid.ID, inLanguage string, words []string) error {
+	for partition, partitionWords := range groupWordsByPartition(clientID, words, p.frequencyCollectorAmount) {
+		packet := external.Packet[inner.AbstractWords]{
+			ClientID: clientID,
+			Payload: inner.AbstractWords{
+				Words:      partitionWords,
+				InLanguage: inLanguage,
+			},
+		}
+		if err := p.sendAbstractWordsTo(partition, packet); err != nil {
+			return err
+		}
+		p.wordsSync.Sent(clientID)
+	}
+	return nil
+}
+
+func (p *AbstractPreprocessing) sendAbstractWordsTo(partition int, packet external.Packet[inner.AbstractWords]) error {
+	data, err := packet.Encode()
+	if err != nil {
+		return fmt.Errorf("encoding abstract words: %w", err)
+	}
+
+	key := common.PartitionKey(common.ExchangeAbstractWords, partition)
+	if err := p.wordsExchange.SendTo(key, middleware.Message{Body: string(data)}); err != nil {
+		return fmt.Errorf("sending abstract words to %s: %w", key, err)
+	}
+	return nil
 }
 
 func (p *AbstractPreprocessing) handleWordCount(packet external.Packet[inner.Abstract], count uint32) error {
@@ -259,10 +286,10 @@ func (p *AbstractPreprocessing) sendUntil2020(packet external.Packet[inner.Abstr
 	if err != nil {
 		return err
 	}
-	return p.until2020.SendTo(
-		fmt.Sprintf("%s-%d", packet.ClientID.Server, packet.ClientID.Seq),
-		middleware.Message{Body: string(data)},
-	)
+
+	partition := common.ClientPartition(packet.ClientID, p.averageCalculatorAmount)
+	key := common.PartitionKey(common.ExchangeAbstractsUntil2020, partition)
+	return p.until2020.SendTo(key, middleware.Message{Body: string(data)})
 }
 
 func parseDateModified(value string) (time.Time, bool) {

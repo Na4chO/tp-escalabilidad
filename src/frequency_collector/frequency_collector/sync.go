@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/Na4chO/tp-escalabilidad/common"
 	clientid "github.com/Na4chO/tp-escalabilidad/common/client_id"
 	"github.com/Na4chO/tp-escalabilidad/common/external"
 	"github.com/Na4chO/tp-escalabilidad/common/inner"
+	"github.com/Na4chO/tp-escalabilidad/common/middleware"
 )
 
 const (
@@ -68,7 +70,7 @@ func (fc *FrequencyCollector) flushPartialTop(clientID clientid.ID) {
 	fc.mu.Unlock()
 
 	if len(top) > 0 {
-		if err := fc.partialTopQueue.Send(external.Packet[inner.PartialTop]{
+		if err := fc.sendPartialTop(clientID, external.Packet[inner.PartialTop]{
 			ClientID: clientID,
 			Payload:  inner.PartialTop{Top: top},
 		}); err != nil {
@@ -87,7 +89,7 @@ func (fc *FrequencyCollector) onFinished(clientID clientid.ID, target syncTarget
 	var err error
 	switch target {
 	case syncPartialTops:
-		err = fc.partialTopQueue.Send(external.Packet[inner.PartialTop]{
+		err = fc.sendPartialTop(clientID, external.Packet[inner.PartialTop]{
 			ClientID: clientID,
 			IsEof:    true,
 			Total:    total,
@@ -109,6 +111,17 @@ func (fc *FrequencyCollector) onFinished(clientID clientid.ID, target syncTarget
 	}
 
 	slog.Info("Client output finished", "client", clientID, "output", target, "total", total)
+}
+
+func (fc *FrequencyCollector) sendPartialTop(clientID clientid.ID, packet external.Packet[inner.PartialTop]) error {
+	data, err := packet.Encode()
+	if err != nil {
+		return err
+	}
+
+	partition := common.ClientPartition(clientID, fc.topAggregatorAmount)
+	key := common.PartitionKey(common.ExchangePartialTops, partition)
+	return fc.partialTopsExchange.SendTo(key, middleware.Message{Body: string(data)})
 }
 
 func (fc *FrequencyCollector) markFinished(clientID clientid.ID, target syncTarget) bool {

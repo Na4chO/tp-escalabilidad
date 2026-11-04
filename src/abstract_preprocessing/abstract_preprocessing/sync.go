@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/Na4chO/tp-escalabilidad/common"
 	clientid "github.com/Na4chO/tp-escalabilidad/common/client_id"
 	"github.com/Na4chO/tp-escalabilidad/common/external"
 	"github.com/Na4chO/tp-escalabilidad/common/inner"
+	"github.com/Na4chO/tp-escalabilidad/common/middleware"
 	"github.com/Na4chO/tp-escalabilidad/common/synchronizer"
 )
 
@@ -59,6 +61,8 @@ func (p *AbstractPreprocessing) onSynced(clientID clientid.ID, target syncTarget
 	if err := syncer.Finished(clientID); err != nil {
 		slog.Error("While sending finished", "client", clientID, "output", target, "err", err)
 	}
+
+	p.clearFinishedIfDone(clientID)
 }
 
 func (p *AbstractPreprocessing) onFinished(clientID clientid.ID, target syncTarget, total uint32) {
@@ -73,11 +77,7 @@ func (p *AbstractPreprocessing) onFinished(clientID clientid.ID, target syncTarg
 func (p *AbstractPreprocessing) sendEOF(clientID clientid.ID, target syncTarget, total uint32) error {
 	switch target {
 	case syncWords:
-		return p.wordsQueue.Send(external.Packet[inner.AbstractWords]{
-			ClientID: clientID,
-			IsEof:    true,
-			Total:    total,
-		})
+		return p.sendAbstractWordsEOF(clientID, total)
 	case syncFrom2021:
 		return p.from2021.Send(external.Packet[inner.AbstractWordCount]{
 			ClientID: clientID,
@@ -93,6 +93,21 @@ func (p *AbstractPreprocessing) sendEOF(clientID clientid.ID, target syncTarget,
 	default:
 		return fmt.Errorf("unknown sync target: %s", target)
 	}
+}
+
+func (p *AbstractPreprocessing) sendAbstractWordsEOF(clientID clientid.ID, total uint32) error {
+	partition := common.ClientPartition(clientID, p.frequencyCollectorAmount)
+	key := common.PartitionKey(common.ExchangeAbstractWords, partition)
+	data, err := external.Packet[inner.AbstractWords]{
+		ClientID: clientID,
+		IsEof:    true,
+		Total:    total,
+	}.Encode()
+	if err != nil {
+		return err
+	}
+
+	return p.wordsExchange.SendTo(key, middleware.Message{Body: string(data)})
 }
 
 func (p *AbstractPreprocessing) synchronizerFor(target syncTarget) *synchronizer.Synchronizer {
@@ -123,4 +138,14 @@ func (p *AbstractPreprocessing) markFinished(clientID clientid.ID, target syncTa
 
 	targets[target] = true
 	return true
+}
+
+func (p *AbstractPreprocessing) clearFinishedIfDone(clientID clientid.ID) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	targets := p.finished[clientID]
+	if targets[syncWords] && targets[syncFrom2021] && targets[syncUntil2020] {
+		delete(p.finished, clientID)
+	}
 }

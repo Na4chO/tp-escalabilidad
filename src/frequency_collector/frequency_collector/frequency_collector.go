@@ -19,12 +19,13 @@ import (
 )
 
 type FrequencyCollector struct {
-	topSize         int
-	wordsQueue      *common.PacketQueue[inner.AbstractWords]
-	partialTopQueue *common.PacketQueue[inner.PartialTop]
-	resultQueue     *common.PacketQueue[inner.QueryResult]
-	partialTopSync  *synchronizer.Synchronizer
-	resultsSync     *synchronizer.Synchronizer
+	topSize             int
+	topAggregatorAmount int
+	wordsExchange       middleware.Router
+	partialTopsExchange middleware.Router
+	resultQueue         *common.PacketQueue[inner.QueryResult]
+	partialTopSync      *synchronizer.Synchronizer
+	resultsSync         *synchronizer.Synchronizer
 
 	mu           sync.Mutex
 	clientStates map[clientid.ID]*clientState
@@ -34,31 +35,33 @@ type FrequencyCollector struct {
 func NewFrequencyCollector(cfg *config.Config) (*FrequencyCollector, error) {
 	connSettings := middleware.ConnSettings{Hostname: cfg.MomHost, Port: cfg.MomPort}
 
-	wordsQueue, err := common.NewPacketQueue[inner.AbstractWords](common.QueueAbstractWords, connSettings)
+	wordsKey := common.PartitionKey(common.ExchangeAbstractWords, cfg.ID)
+	wordsExchange, err := middleware.CreateExchangeMiddleware(common.ExchangeAbstractWords, []string{wordsKey}, connSettings)
 	if err != nil {
 		return nil, err
 	}
 
-	partialTopQueue, err := common.NewPacketQueue[inner.PartialTop](common.QueuePartialTops, connSettings)
+	partialTopsExchange, err := middleware.CreateExchangeMiddleware(common.ExchangePartialTops, nil, connSettings)
 	if err != nil {
-		wordsQueue.Close()
+		wordsExchange.Close()
 		return nil, err
 	}
 
 	resultQueue, err := common.NewPacketQueue[inner.QueryResult](common.QueueQueryResult, connSettings)
 	if err != nil {
-		partialTopQueue.Close()
-		wordsQueue.Close()
+		partialTopsExchange.Close()
+		wordsExchange.Close()
 		return nil, err
 	}
 
 	fc := &FrequencyCollector{
-		topSize:         cfg.TopSize,
-		wordsQueue:      wordsQueue,
-		partialTopQueue: partialTopQueue,
-		resultQueue:     resultQueue,
-		clientStates:    make(map[clientid.ID]*clientState),
-		finished:        make(map[clientid.ID]map[syncTarget]bool),
+		topSize:             cfg.TopSize,
+		topAggregatorAmount: cfg.TopAggregatorAmount,
+		wordsExchange:       wordsExchange,
+		partialTopsExchange: partialTopsExchange,
+		resultQueue:         resultQueue,
+		clientStates:        make(map[clientid.ID]*clientState),
+		finished:            make(map[clientid.ID]map[syncTarget]bool),
 	}
 
 	instanceID, err := os.Hostname()
@@ -96,7 +99,7 @@ func (fc *FrequencyCollector) Run() error {
 	go fc.handleSignals()
 
 	errs := make(chan error, 3)
-	go func() { errs <- fc.wordsQueue.StartConsuming(fc.handleAbstractWordsPacket) }()
+	go func() { errs <- fc.wordsExchange.StartConsuming(fc.handleAbstractWordsMessage) }()
 	go func() { errs <- fc.partialTopSync.StartConsuming() }()
 	go func() { errs <- fc.resultsSync.StartConsuming() }()
 
@@ -112,8 +115,8 @@ func (fc *FrequencyCollector) Run() error {
 }
 
 func (fc *FrequencyCollector) Stop() {
-	if fc.wordsQueue != nil {
-		_ = fc.wordsQueue.StopConsuming()
+	if fc.wordsExchange != nil {
+		_ = fc.wordsExchange.StopConsuming()
 	}
 	if fc.partialTopSync != nil {
 		_ = fc.partialTopSync.StopConsuming()
@@ -125,11 +128,11 @@ func (fc *FrequencyCollector) Stop() {
 
 func (fc *FrequencyCollector) Close() error {
 	var errs []error
-	if fc.wordsQueue != nil {
-		errs = append(errs, fc.wordsQueue.Close())
+	if fc.wordsExchange != nil {
+		errs = append(errs, fc.wordsExchange.Close())
 	}
-	if fc.partialTopQueue != nil {
-		errs = append(errs, fc.partialTopQueue.Close())
+	if fc.partialTopsExchange != nil {
+		errs = append(errs, fc.partialTopsExchange.Close())
 	}
 	if fc.resultQueue != nil {
 		errs = append(errs, fc.resultQueue.Close())
@@ -141,6 +144,17 @@ func (fc *FrequencyCollector) Close() error {
 		errs = append(errs, fc.resultsSync.Close())
 	}
 	return errors.Join(errs...)
+}
+
+func (fc *FrequencyCollector) handleAbstractWordsMessage(msg middleware.Message, ack func(), nack func()) {
+	packet, err := external.DecodePacket[inner.AbstractWords]([]byte(msg.Body))
+	if err != nil {
+		slog.Error("Discarding abstract words message", "err", err)
+		nack()
+		return
+	}
+
+	fc.handleAbstractWordsPacket(packet, ack, nack)
 }
 
 func (fc *FrequencyCollector) handleAbstractWordsPacket(packet external.Packet[inner.AbstractWords], ack func(), nack func()) {

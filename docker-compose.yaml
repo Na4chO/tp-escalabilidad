@@ -54,6 +54,8 @@ services:
         condition: service_healthy
     environment:
       - TOP_SIZE=5
+      - ID=0
+      - TOP_AGGREGATOR_AMOUNT=1
       - MOM_HOST=rabbitmq
       - MOM_PORT=5672
 
@@ -61,12 +63,12 @@ services:
     build:
       context: ./src
       dockerfile: top_aggregator/Dockerfile
-    container_name: top_aggregator
     depends_on:
       rabbitmq:
         condition: service_healthy
     environment:
       - TOP_SIZE=5
+      - ID=0
       - MOM_HOST=rabbitmq
       - MOM_PORT=5672
 
@@ -97,11 +99,11 @@ services:
     build:
       context: ./src
       dockerfile: average_calculator/Dockerfile
-    container_name: average_calculator
     depends_on:
       rabbitmq:
         condition: service_healthy
     environment:
+      - ID=0
       - MOM_HOST=rabbitmq
       - MOM_PORT=5672
 
@@ -113,6 +115,8 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      - FREQUENCY_COLLECTOR_AMOUNT=1
+      - AVERAGE_CALCULATOR_AMOUNT=1
       - MOM_HOST=rabbitmq
       - MOM_PORT=5672
 
