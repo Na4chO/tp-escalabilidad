@@ -4,10 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 
 	clientid "github.com/Na4chO/tp-escalabilidad/common/client_id"
 	"github.com/Na4chO/tp-escalabilidad/common/external"
 	"github.com/Na4chO/tp-escalabilidad/common/inner"
+	"github.com/Na4chO/tp-escalabilidad/common/middleware"
 )
 
 const (
@@ -63,11 +65,28 @@ func (mf *MetadataFilter) onFinished(clientID clientid.ID, target syncTarget, to
 	var err error
 	switch target {
 	case syncImages:
-		err = mf.imageCandidatesQueue.Send(external.Packet[inner.Metadata]{
-			ClientID: clientID,
-			IsEof:    true,
-			Total:    total,
-		})
+		mf.mu.Lock()
+		partitions := mf.sentByPartition[clientID]
+		toSend := make(map[int]uint32, len(partitions))
+		maps.Copy(toSend, partitions)
+		delete(mf.sentByPartition, clientID)
+		mf.mu.Unlock()
+		for part, c := range toSend {
+			key := fmt.Sprintf("img-%d", part)
+			eofPacket := external.Packet[inner.Metadata]{
+				ClientID: clientID,
+				IsEof:    true,
+				Total:    c,
+			}
+			data, err := eofPacket.Encode()
+			if err != nil {
+				slog.Error("encoding image EOF", "err", err)
+				continue
+			}
+			if err := mf.imageCandidatesEx.SendTo(key, middleware.Message{Body: string(data)}); err != nil {
+				slog.Error("sending image EOF", "partition", part, "err", err)
+			}
+		}
 	case syncResults:
 		err = mf.resultQueue.Send(external.Packet[inner.QueryResult]{
 			ClientID: clientID,

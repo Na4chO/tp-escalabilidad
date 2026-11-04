@@ -3,6 +3,8 @@ package metadata_filter
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -27,14 +29,16 @@ type sectionInfo struct {
 }
 
 type MetadataFilter struct {
-	metadataQueue        *common.PacketQueue[inner.Metadata]
-	imageCandidatesQueue *common.PacketQueue[inner.Metadata]
-	resultQueue          *common.PacketQueue[inner.QueryResult]
-	running              atomic.Bool
-	resultsSync          *synchronizer.Synchronizer
-	imageSync            *synchronizer.Synchronizer
-	mu                   sync.Mutex
-	finished             map[clientid.ID]map[syncTarget]bool
+	metadataQueue     *common.PacketQueue[inner.Metadata]
+	imageCandidatesEx middleware.Router
+	resultQueue       *common.PacketQueue[inner.QueryResult]
+	running           atomic.Bool
+	resultsSync       *synchronizer.Synchronizer
+	imageSync         *synchronizer.Synchronizer
+	mu                sync.Mutex
+	finished          map[clientid.ID]map[syncTarget]bool
+	imgFetcherCount   int
+	sentByPartition   map[clientid.ID]map[int]uint32
 }
 
 func NewMetadataFilter(cfg *config.Config) (*MetadataFilter, error) {
@@ -45,24 +49,26 @@ func NewMetadataFilter(cfg *config.Config) (*MetadataFilter, error) {
 		return nil, err
 	}
 
-	imageCandidatesQueue, err := common.NewPacketQueue[inner.Metadata]("imageCandidates", connSettings)
+	resultQueue, err := common.NewPacketQueue[inner.QueryResult]("queryResult", connSettings)
 	if err != nil {
 		metadataQueue.Close()
 		return nil, err
 	}
 
-	resultQueue, err := common.NewPacketQueue[inner.QueryResult]("queryResult", connSettings)
+	imageCandidatesEx, err := middleware.CreateExchangeMiddleware(common.ExchangeImageCandidates, nil, connSettings)
 	if err != nil {
 		metadataQueue.Close()
-		imageCandidatesQueue.Close()
+		resultQueue.Close()
 		return nil, err
 	}
 
 	mf := &MetadataFilter{
-		metadataQueue:        metadataQueue,
-		imageCandidatesQueue: imageCandidatesQueue,
-		resultQueue:          resultQueue,
-		finished:             make(map[clientid.ID]map[syncTarget]bool),
+		metadataQueue:     metadataQueue,
+		imageCandidatesEx: imageCandidatesEx,
+		resultQueue:       resultQueue,
+		finished:          make(map[clientid.ID]map[syncTarget]bool),
+		imgFetcherCount:   cfg.ImageFetcherCount,
+		sentByPartition:   make(map[clientid.ID]map[int]uint32),
 	}
 	mf.running.Store(true)
 
@@ -122,7 +128,7 @@ func (mf *MetadataFilter) closeMiddlewares() error {
 	return errors.Join(
 		mf.metadataQueue.StopConsuming(),
 		mf.metadataQueue.Close(),
-		mf.imageCandidatesQueue.Close(),
+		mf.imageCandidatesEx.Close(),
 		mf.resultQueue.Close(),
 		mf.resultsSync.Close(),
 		mf.imageSync.Close(),
@@ -170,9 +176,21 @@ func (mf *MetadataFilter) handleMetadata(clientID clientid.ID, metadata inner.Me
 		mf.resultsSync.Sent(clientID)
 	}
 	if hasBiographySection(metadata.Sections) {
-		if err := mf.imageCandidatesQueue.SendData(clientID, metadata); err != nil {
+		part := mf.imagePartition(metadata.ImageUrl)
+		key := fmt.Sprintf("img-%d", part)
+
+		packet := external.Packet[inner.Metadata]{
+			ClientID: clientID,
+			Payload:  metadata,
+		}
+		data, err := packet.Encode()
+		if err != nil {
 			return err
 		}
+		if err := mf.imageCandidatesEx.SendTo(key, middleware.Message{Body: string(data)}); err != nil {
+			return err
+		}
+		mf.registerSentToPartition(clientID, part)
 		mf.imageSync.Sent(clientID)
 	}
 	return nil
@@ -183,6 +201,24 @@ func (mf *MetadataFilter) handleEOFPacket(packet external.Packet[inner.Metadata]
 		mf.resultsSync.EndOfData(packet.ClientID, packet.Total),
 		mf.imageSync.EndOfData(packet.ClientID, packet.Total),
 	)
+}
+
+func (mf *MetadataFilter) imagePartition(url string) int {
+	if mf.imgFetcherCount <= 0 {
+		return 0
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(url))
+	return int(h.Sum32()) % mf.imgFetcherCount
+}
+
+func (mf *MetadataFilter) registerSentToPartition(clientID clientid.ID, p int) {
+	mf.mu.Lock()
+	defer mf.mu.Unlock()
+	if mf.sentByPartition[clientID] == nil {
+		mf.sentByPartition[clientID] = make(map[int]uint32)
+	}
+	mf.sentByPartition[clientID][p]++
 }
 
 func parseDateModified(value string) (time.Time, bool) {

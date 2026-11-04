@@ -8,4 +8,5 @@ const (
 	ExchangePartialTops        = "partialTops"
 	QueueQueryResult           = "queryResult"
 	ExchangeAbstractsUntil2020 = "abstractsUntil2020"
+	ExchangeImageCandidates    = "imageCandidatesExchange"
 )

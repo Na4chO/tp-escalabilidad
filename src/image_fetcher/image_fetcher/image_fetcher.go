@@ -27,37 +27,39 @@ type clientState struct {
 }
 
 type ImageFetcher struct {
-	resultQueue     *common.PacketQueue[inner.QueryResult]
-	candidatesQueue *common.PacketQueue[inner.Metadata]
-	imageCache      *ImageCache
-	running         atomic.Bool
-	userAgent       string
-	httpClient      *http.Client
-	mu              sync.Mutex
-	clientStates    map[clientid.ID]*clientState
+	resultQueue       *common.PacketQueue[inner.QueryResult]
+	imageCandidatesEx middleware.Router
+	imageCache        *ImageCache
+	running           atomic.Bool
+	userAgent         string
+	httpClient        *http.Client
+	mu                sync.Mutex
+	clientStates      map[clientid.ID]*clientState
+	partition         int
 }
 
 func NewImageFetcher(cfg *config.Config) (*ImageFetcher, error) {
 	connSettings := middleware.ConnSettings{Hostname: cfg.MomHost, Port: cfg.MomPort}
 
-	candidatesQueue, err := common.NewPacketQueue[inner.Metadata]("imageCandidates", connSettings)
+	imageCandidatesEx, err := middleware.CreateExchangeMiddleware(common.ExchangeImageCandidates, []string{fmt.Sprintf("img-%d", cfg.Partition)}, connSettings)
 	if err != nil {
 		return nil, err
 	}
 
-	resultQueue, err := common.NewPacketQueue[inner.QueryResult]("queryResult", connSettings)
+	resultQueue, err := common.NewPacketQueue[inner.QueryResult](common.QueueQueryResult, connSettings)
 	if err != nil {
-		candidatesQueue.Close()
+		imageCandidatesEx.Close()
 		return nil, err
 	}
 
 	f := &ImageFetcher{
-		resultQueue:     resultQueue,
-		candidatesQueue: candidatesQueue,
-		imageCache:      NewImageCache(cfg.ImageCacheSize),
-		userAgent:       cfg.UserAgent,
-		httpClient:      http.DefaultClient,
-		clientStates:    make(map[clientid.ID]*clientState),
+		resultQueue:       resultQueue,
+		imageCandidatesEx: imageCandidatesEx,
+		imageCache:        NewImageCache(cfg.ImageCacheSize),
+		userAgent:         cfg.UserAgent,
+		httpClient:        http.DefaultClient,
+		clientStates:      make(map[clientid.ID]*clientState),
+		partition:         cfg.Partition,
 	}
 	f.running.Store(true)
 	return f, nil
@@ -67,17 +69,24 @@ func (f *ImageFetcher) Run() error {
 	go f.handleSignals()
 
 	err := errors.Join(
-		f.candidatesQueue.StartConsuming(func(packet external.Packet[inner.Metadata], ack, nack func()) {
-			f.handleCandidatePacket(packet, ack, nack)
-		}),
+		f.imageCandidatesEx.StartConsuming(f.handleImageCandidatesMessage),
 		f.closeMiddlewares(),
 	)
 
 	if f.running.Load() {
 		return err
 	}
-
 	return nil
+}
+
+func (f *ImageFetcher) handleImageCandidatesMessage(msg middleware.Message, ack func(), nack func()) {
+	packet, err := external.DecodePacket[inner.Metadata]([]byte(msg.Body))
+	if err != nil {
+		slog.Error("While decoding image candidate packet", "err", err)
+		nack()
+		return
+	}
+	f.handleCandidatePacket(packet, ack, nack)
 }
 
 func (f *ImageFetcher) handleSignals() {
@@ -86,13 +95,13 @@ func (f *ImageFetcher) handleSignals() {
 	<-signals
 	slog.Info("SIGTERM signal received")
 	f.running.Store(false)
-	_ = f.candidatesQueue.StopConsuming()
+	_ = f.imageCandidatesEx.StopConsuming()
 }
 
 func (f *ImageFetcher) closeMiddlewares() error {
 	return errors.Join(
-		f.candidatesQueue.StopConsuming(),
-		f.candidatesQueue.Close(),
+		f.imageCandidatesEx.StopConsuming(),
+		f.imageCandidatesEx.Close(),
 		f.resultQueue.Close(),
 	)
 }
@@ -120,27 +129,40 @@ func (f *ImageFetcher) handleCandidate(clientID clientid.ID, metadata inner.Meta
 	if metadata.ImageUrl == "" {
 		slog.Debug("Ignoring article because image url is empty")
 		f.mu.Lock()
-		state := f.clientStates[clientID]
+		state := f.clientStateFor(clientID)
 		state.receivedCount++
 		f.mu.Unlock()
 		return f.checkAndFinalize(clientID)
 	}
+
 	var image []byte
 	var err error
-	var inCache bool
-	if image, inCache = f.imageCache.Get(metadata.ImageUrl); !inCache {
+	if cached, ok := f.imageCache.Get(metadata.ImageUrl); ok {
+		image = cached
+	} else {
 		image, err = f.fetchImage(metadata.ImageUrl)
 		if err != nil {
-			return err
+			f.mu.Lock()
+			state := f.clientStateFor(clientID)
+			state.receivedCount++
+			f.mu.Unlock()
+			return f.checkAndFinalize(clientID)
 		}
 		f.imageCache.Put(metadata.ImageUrl, image)
 	}
-	return f.resultQueue.SendData(clientID, inner.QueryResult{
+	if err := f.resultQueue.SendData(clientID, inner.QueryResult{
 		QueryType: 2,
 		Name:      metadata.Name,
 		Url:       metadata.Url,
 		Image:     image,
-	})
+	}); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	state := f.clientStateFor(clientID)
+	state.receivedCount++
+	f.mu.Unlock()
+	return f.checkAndFinalize(clientID)
 }
 
 func (f *ImageFetcher) checkAndFinalize(clientID clientid.ID) error {

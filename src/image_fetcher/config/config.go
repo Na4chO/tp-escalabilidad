@@ -11,6 +11,7 @@ type Config struct {
 	MomPort        int
 	UserAgent      string
 	ImageCacheSize int
+	Partition      int
 }
 
 func NewConfig() (*Config, error) {
@@ -31,7 +32,12 @@ func NewConfig() (*Config, error) {
 
 	imageCacheSize, err := strconv.Atoi(os.Getenv("IMAGE_CACHE_SIZE"))
 	if err != nil {
-		return nil, errors.New("IMAGE_CACHE_SIZE environment variable is required")
+		return nil, errors.New("IMAGE_CACHE_SIZE environment variable is required and must be a number")
+	}
+
+	partition, err := strconv.Atoi(os.Getenv("PARTITION"))
+	if err != nil {
+		return nil, errors.New("PARTITION environment variable is required and must be a number")
 	}
 
 	return &Config{
@@ -39,5 +45,6 @@ func NewConfig() (*Config, error) {
 		MomPort:        momPort,
 		UserAgent:      userAgent,
 		ImageCacheSize: imageCacheSize,
+		Partition:      partition,
 	}, nil
 }

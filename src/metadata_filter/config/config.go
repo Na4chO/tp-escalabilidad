@@ -7,9 +7,10 @@ import (
 )
 
 type Config struct {
-	MomHost    string
-	MomPort    int
-	InstanceID string
+	MomHost           string
+	MomPort           int
+	InstanceID        string
+	ImageFetcherCount int
 }
 
 func NewConfig() (*Config, error) {
@@ -28,9 +29,15 @@ func NewConfig() (*Config, error) {
 		return nil, errors.New("INSTANCE_ID environment variable is required")
 	}
 
+	imageFetcherCount, err := strconv.Atoi(os.Getenv("IMAGE_FETCHER_COUNT"))
+	if err != nil {
+		return nil, errors.New("IMAGE_FETCHER_COUNT environment variable is required")
+	}
+
 	return &Config{
-		MomHost:    momHost,
-		MomPort:    momPort,
-		InstanceID: instanceID,
+		MomHost:           momHost,
+		MomPort:           momPort,
+		InstanceID:        instanceID,
+		ImageFetcherCount: imageFetcherCount,
 	}, nil
 }
