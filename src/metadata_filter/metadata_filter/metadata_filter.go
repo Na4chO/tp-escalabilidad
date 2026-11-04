@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/Na4chO/tp-escalabilidad/common/external"
 	"github.com/Na4chO/tp-escalabilidad/common/inner"
 	"github.com/Na4chO/tp-escalabilidad/common/middleware"
+	"github.com/Na4chO/tp-escalabilidad/common/synchronizer"
 	"github.com/Na4chO/tp-escalabilidad/metadata_filter/config"
 )
 
@@ -29,6 +31,10 @@ type MetadataFilter struct {
 	imageCandidatesQueue *common.PacketQueue[inner.Metadata]
 	resultQueue          *common.PacketQueue[inner.QueryResult]
 	running              atomic.Bool
+	resultsSync          *synchronizer.Synchronizer
+	imageSync            *synchronizer.Synchronizer
+	mu                   sync.Mutex
+	finished             map[clientid.ID]map[syncTarget]bool
 }
 
 func NewMetadataFilter(cfg *config.Config) (*MetadataFilter, error) {
@@ -56,9 +62,32 @@ func NewMetadataFilter(cfg *config.Config) (*MetadataFilter, error) {
 		metadataQueue:        metadataQueue,
 		imageCandidatesQueue: imageCandidatesQueue,
 		resultQueue:          resultQueue,
+		finished:             make(map[clientid.ID]map[syncTarget]bool),
 	}
 	mf.running.Store(true)
+
+	mf.resultsSync, err = mf.createSynchronizer(cfg.InstanceID, resultsSyncExchange, syncResults, connSettings)
+	if err != nil {
+		mf.closeMiddlewares()
+		return nil, err
+	}
+	mf.imageSync, err = mf.createSynchronizer(cfg.InstanceID, imageSyncExchange, syncImages, connSettings)
+	if err != nil {
+		mf.closeMiddlewares()
+		mf.resultsSync.Close()
+		return nil, err
+	}
 	return mf, nil
+}
+
+func (mf *MetadataFilter) createSynchronizer(instanceID, exchangeName string, target syncTarget, connSettings middleware.ConnSettings) (*synchronizer.Synchronizer, error) {
+	return synchronizer.NewSynchronizer(
+		instanceID,
+		exchangeName,
+		connSettings,
+		func(clientID clientid.ID) { mf.onSynced(clientID, target) },
+		func(clientID clientid.ID, total uint32) { mf.onFinished(clientID, target, total) },
+	)
 }
 
 func (mf *MetadataFilter) Run() error {
@@ -68,6 +97,8 @@ func (mf *MetadataFilter) Run() error {
 		mf.metadataQueue.StartConsuming(func(packet external.Packet[inner.Metadata], ack, nack func()) {
 			mf.handleMetadataPacket(packet, ack, nack)
 		}),
+		mf.imageSync.StartConsuming(),
+		mf.resultsSync.StartConsuming(),
 		mf.closeMiddlewares(),
 	)
 
@@ -93,6 +124,8 @@ func (mf *MetadataFilter) closeMiddlewares() error {
 		mf.metadataQueue.Close(),
 		mf.imageCandidatesQueue.Close(),
 		mf.resultQueue.Close(),
+		mf.resultsSync.Close(),
+		mf.imageSync.Close(),
 	)
 }
 
@@ -116,6 +149,7 @@ func (mf *MetadataFilter) handleMetadataPacket(packet external.Packet[inner.Meta
 }
 
 func (mf *MetadataFilter) handleMetadata(clientID clientid.ID, metadata inner.Metadata) error {
+	mf.markProcessed(clientID)
 	date, ok := parseDateModified(metadata.DateModified)
 	if !ok {
 		slog.Warn("Invalid date modified", "date", metadata.DateModified)
@@ -133,13 +167,22 @@ func (mf *MetadataFilter) handleMetadata(clientID clientid.ID, metadata inner.Me
 		if err := mf.resultQueue.SendData(clientID, result); err != nil {
 			return err
 		}
+		mf.resultsSync.Sent(clientID)
 	}
 	if hasBiographySection(metadata.Sections) {
 		if err := mf.imageCandidatesQueue.SendData(clientID, metadata); err != nil {
 			return err
 		}
+		mf.imageSync.Sent(clientID)
 	}
 	return nil
+}
+
+func (mf *MetadataFilter) handleEOFPacket(packet external.Packet[inner.Metadata]) error {
+	return errors.Join(
+		mf.resultsSync.EndOfData(packet.ClientID, packet.Total),
+		mf.imageSync.EndOfData(packet.ClientID, packet.Total),
+	)
 }
 
 func parseDateModified(value string) (time.Time, bool) {

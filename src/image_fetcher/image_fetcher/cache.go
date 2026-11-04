@@ -5,7 +5,7 @@ import (
 	"sync"
 )
 
-type imageCache struct {
+type ImageCache struct {
 	mu       sync.Mutex
 	capacity int
 	items    map[string]*list.Element
@@ -17,14 +17,14 @@ type cacheEntry struct {
 	value []byte
 }
 
-func NewImageCache(capacity int) *imageCache {
-	return &imageCache{
+func NewImageCache(capacity int) *ImageCache {
+	return &ImageCache{
 		capacity: capacity,
 		items:    make(map[string]*list.Element),
 		lru:      list.New(),
 	}
 }
-func (c *imageCache) Get(key string) ([]byte, bool) {
+func (c *ImageCache) Get(key string) ([]byte, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -37,7 +37,7 @@ func (c *imageCache) Get(key string) ([]byte, bool) {
 	return entry.value, true
 }
 
-func (c *imageCache) Put(key string, value []byte) {
+func (c *ImageCache) Put(key string, value []byte) {
 	if c.capacity <= 0 {
 		return
 	}

@@ -22,7 +22,7 @@ import (
 type ImageFetcher struct {
 	resultQueue     *common.PacketQueue[inner.QueryResult]
 	candidatesQueue *common.PacketQueue[inner.Metadata]
-	imageCache      *imageCache
+	imageCache      *ImageCache
 	running         atomic.Bool
 	userAgent       string
 	httpClient      *http.Client
@@ -118,6 +118,7 @@ func (f *ImageFetcher) handleCandidate(clientID clientid.ID, metadata inner.Meta
 	if err != nil {
 		return err
 	}
+	f.imageCache.Put(metadata.ImageUrl, image)
 	return f.resultQueue.SendData(clientID, inner.QueryResult{
 		QueryType: 2,
 		Name:      metadata.Name,
