@@ -27,8 +27,8 @@ services:
     environment:
       - MOM_HOST=rabbitmq
       - MOM_PORT=5672
-    ports:
-      - "5678:5678"
+      - INSTANCE_ID=0
+      - IMAGE_FETCHER_COUNT=1
 
   image_fetcher:
     build:
@@ -41,9 +41,9 @@ services:
     environment:
       - MOM_HOST=rabbitmq
       - MOM_PORT=5672
-      - WIKIMEDIA_USER_AGENT=SistemasDistribuidos-Grupo29/1.0
-    ports:
-      - "5678:5678"
+      - WIKIMEDIA_USER_AGENT=SistemasDistribuidos-Grupo29/1.0 (https://github.com/Na4chO/tp-escalabilidad)
+      - IMAGE_CACHE_SIZE=100
+      - PARTITION=0
 
   frequency_collector:
     build:
@@ -53,7 +53,7 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
-      - TOP_SIZE=5
+      - TOP_SIZE=20
       - ID=0
       - TOP_AGGREGATOR_AMOUNT=1
       - MOM_HOST=rabbitmq
@@ -67,7 +67,7 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
-      - TOP_SIZE=5
+      - TOP_SIZE=20
       - ID=0
       - MOM_HOST=rabbitmq
       - MOM_PORT=5672
@@ -83,8 +83,10 @@ services:
       - SERVER_HOST=server
       - SERVER_PORT=5678
       - INPUT_PATH=/data
+      - OUTPUT_PATH=/output
     volumes:
       - ./data:/data:ro
+      - ./output/client_0:/output
 
   abstract_word_counter:
     build:

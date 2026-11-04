@@ -8,34 +8,30 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"sync"
+	"strconv"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/Na4chO/tp-escalabilidad/common"
 	clientid "github.com/Na4chO/tp-escalabilidad/common/client_id"
 	"github.com/Na4chO/tp-escalabilidad/common/external"
 	"github.com/Na4chO/tp-escalabilidad/common/inner"
 	"github.com/Na4chO/tp-escalabilidad/common/middleware"
+	"github.com/Na4chO/tp-escalabilidad/common/synchronizer"
 	"github.com/Na4chO/tp-escalabilidad/image_fetcher/config"
 )
 
-type clientState struct {
-	receivedCount uint32
-	expectedTotal uint32
-	hasEOF        bool
-}
+const syncExchange = "image_fetcher_sync"
 
 type ImageFetcher struct {
 	resultQueue       *common.PacketQueue[inner.QueryResult]
 	imageCandidatesEx middleware.Router
+	synchronizer      *synchronizer.Synchronizer
 	imageCache        *ImageCache
 	running           atomic.Bool
 	userAgent         string
 	httpClient        *http.Client
-	mu                sync.Mutex
-	clientStates      map[clientid.ID]*clientState
-	partition         int
 }
 
 func NewImageFetcher(cfg *config.Config) (*ImageFetcher, error) {
@@ -57,10 +53,17 @@ func NewImageFetcher(cfg *config.Config) (*ImageFetcher, error) {
 		imageCandidatesEx: imageCandidatesEx,
 		imageCache:        NewImageCache(cfg.ImageCacheSize),
 		userAgent:         cfg.UserAgent,
-		httpClient:        http.DefaultClient,
-		clientStates:      make(map[clientid.ID]*clientState),
-		partition:         cfg.Partition,
+		httpClient:        &http.Client{Timeout: 30 * time.Second},
 	}
+
+	// The partition is unique per instance, so it works as the synchronizer instance id
+	f.synchronizer, err = synchronizer.NewSynchronizer(strconv.Itoa(cfg.Partition), syncExchange, connSettings, f.onSynced, f.onFinished)
+	if err != nil {
+		imageCandidatesEx.Close()
+		resultQueue.Close()
+		return nil, err
+	}
+
 	f.running.Store(true)
 	return f, nil
 }
@@ -68,15 +71,45 @@ func NewImageFetcher(cfg *config.Config) (*ImageFetcher, error) {
 func (f *ImageFetcher) Run() error {
 	go f.handleSignals()
 
-	err := errors.Join(
-		f.imageCandidatesEx.StartConsuming(f.handleImageCandidatesMessage),
-		f.closeMiddlewares(),
-	)
+	errs := make(chan error, 2)
+	go func() { errs <- f.imageCandidatesEx.StartConsuming(f.handleImageCandidatesMessage) }()
+	go func() { errs <- f.synchronizer.StartConsuming() }()
+
+	var firstErr error
+	for range 2 {
+		if err := <-errs; err != nil && firstErr == nil {
+			firstErr = err
+		}
+		f.stop()
+	}
+	err := errors.Join(firstErr, f.closeMiddlewares())
 
 	if f.running.Load() {
 		return err
 	}
 	return nil
+}
+
+func (f *ImageFetcher) stop() {
+	_ = f.imageCandidatesEx.StopConsuming()
+	_ = f.synchronizer.StopConsuming()
+}
+
+func (f *ImageFetcher) handleSignals() {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	<-signals
+	slog.Info("SIGTERM signal received")
+	f.running.Store(false)
+	f.stop()
+}
+
+func (f *ImageFetcher) closeMiddlewares() error {
+	return errors.Join(
+		f.imageCandidatesEx.Close(),
+		f.synchronizer.Close(),
+		f.resultQueue.Close(),
+	)
 }
 
 func (f *ImageFetcher) handleImageCandidatesMessage(msg middleware.Message, ack func(), nack func()) {
@@ -86,149 +119,129 @@ func (f *ImageFetcher) handleImageCandidatesMessage(msg middleware.Message, ack 
 		nack()
 		return
 	}
-	f.handleCandidatePacket(packet, ack, nack)
-}
 
-func (f *ImageFetcher) handleSignals() {
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
-	<-signals
-	slog.Info("SIGTERM signal received")
-	f.running.Store(false)
-	_ = f.imageCandidatesEx.StopConsuming()
-}
-
-func (f *ImageFetcher) closeMiddlewares() error {
-	return errors.Join(
-		f.imageCandidatesEx.StopConsuming(),
-		f.imageCandidatesEx.Close(),
-		f.resultQueue.Close(),
-	)
-}
-
-func (f *ImageFetcher) handleCandidatePacket(packet external.Packet[inner.Metadata], ack func(), nack func()) {
 	if packet.IsEof {
-		if err := f.handleEOFPacket(packet); err != nil {
-			slog.Error("While handling EOF packet from Image Fetcher", "err", err)
-			nack()
-			return
-		}
-		ack()
-		return
+		err = f.synchronizer.EndOfData(packet.ClientID, packet.Total)
+	} else {
+		err = f.handleCandidate(packet.ClientID, packet.Payload)
 	}
-
-	if err := f.handleCandidate(packet.ClientID, packet.Payload); err != nil {
-		slog.Error("While handling image candidate", "err", err)
+	if err != nil {
+		slog.Error("While handling image candidate", "client", packet.ClientID, "isEOF", packet.IsEof, "err", err)
 		nack()
 		return
 	}
 	ack()
 }
 
+// Marked as processed only after the result is sent, so the processed count never runs ahead of the sent one
 func (f *ImageFetcher) handleCandidate(clientID clientid.ID, metadata inner.Metadata) error {
+	if err := f.sendResult(clientID, metadata); err != nil {
+		return err
+	}
+	return f.synchronizer.Processed(clientID)
+}
+
+func (f *ImageFetcher) sendResult(clientID clientid.ID, metadata inner.Metadata) error {
 	if metadata.ImageUrl == "" {
-		slog.Debug("Ignoring article because image url is empty")
-		f.mu.Lock()
-		state := f.clientStateFor(clientID)
-		state.receivedCount++
-		f.mu.Unlock()
-		return f.checkAndFinalize(clientID)
+		return nil
 	}
 
-	var image []byte
-	var err error
-	if cached, ok := f.imageCache.Get(metadata.ImageUrl); ok {
-		image = cached
-	} else {
-		image, err = f.fetchImage(metadata.ImageUrl)
-		if err != nil {
-			f.mu.Lock()
-			state := f.clientStateFor(clientID)
-			state.receivedCount++
-			f.mu.Unlock()
-			return f.checkAndFinalize(clientID)
+	image, ok := f.imageCache.Get(metadata.ImageUrl)
+	if !ok {
+		var err error
+		if image, err = f.fetchImage(metadata.ImageUrl); err != nil {
+			slog.Warn("Skipping article, could not fetch image", "url", metadata.Url, "image", metadata.ImageUrl, "err", err)
+			return nil
 		}
 		f.imageCache.Put(metadata.ImageUrl, image)
 	}
-	if err := f.resultQueue.SendData(clientID, inner.QueryResult{
-		QueryType: 2,
-		Name:      metadata.Name,
-		Url:       metadata.Url,
-		Image:     image,
+
+	if err := f.resultQueue.Send(external.Packet[inner.QueryResult]{
+		ClientID: clientID,
+		Payload: inner.QueryResult{
+			QueryType: 2,
+			Name:      metadata.Name,
+			Url:       metadata.Url,
+			Image:     image,
+		},
 	}); err != nil {
 		return err
 	}
-	f.mu.Lock()
-	state := f.clientStateFor(clientID)
-	state.receivedCount++
-	f.mu.Unlock()
-	return f.checkAndFinalize(clientID)
+	f.synchronizer.Sent(clientID)
+	return nil
 }
 
-func (f *ImageFetcher) checkAndFinalize(clientID clientid.ID) error {
-	f.mu.Lock()
-	state := f.clientStates[clientID]
-	if state == nil || !state.hasEOF || state.receivedCount < state.expectedTotal {
-		f.mu.Unlock()
-		return nil
+// Every candidate of the client was processed by some instance, and this one already sent its results
+func (f *ImageFetcher) onSynced(clientID clientid.ID) {
+	if err := f.synchronizer.Finished(clientID); err != nil {
+		slog.Error("While sending finished", "client", clientID, "err", err)
 	}
-	delete(f.clientStates, clientID)
-	f.mu.Unlock()
+}
 
-	return f.resultQueue.Send(external.Packet[inner.QueryResult]{
+// Only the instance that received the EOF gets here, with the results sent by every instance
+func (f *ImageFetcher) onFinished(clientID clientid.ID, total uint32) {
+	err := f.resultQueue.Send(external.Packet[inner.QueryResult]{
 		ClientID: clientID,
 		IsEof:    true,
-		Total:    state.receivedCount,
+		Total:    total,
 		Payload:  inner.QueryResult{QueryType: 2},
 	})
+	if err != nil {
+		slog.Error("While sending results EOF", "client", clientID, "err", err)
+		return
+	}
+	slog.Info("Client finished", "client", clientID, "total", total)
 }
 
-func (f *ImageFetcher) sendImageResult(clientID clientid.ID, metadata inner.Metadata, image []byte) error {
-	return f.resultQueue.SendData(clientID, inner.QueryResult{
-		QueryType: 2,
-		Name:      metadata.Name,
-		Url:       metadata.Url,
-		Image:     image,
-	})
-}
+const (
+	fetchAttempts     = 4
+	fetchRetryBackoff = time.Second
+	maxRetryWait      = 10 * time.Second
+)
 
+// fetchImage retries when Wikimedia rate limits (429), waiting Retry-After or an exponential backoff.
+// Longer waits are not worth it: the fetcher is blocked meanwhile, so the image is skipped
 func (f *ImageFetcher) fetchImage(url string) ([]byte, error) {
+	backoff := fetchRetryBackoff
+	for attempt := 1; ; attempt++ {
+		image, retryAfter, err := f.requestImage(url)
+		if err == nil || retryAfter < 0 || attempt == fetchAttempts {
+			return image, err
+		}
+		if retryAfter == 0 {
+			retryAfter = backoff
+			backoff *= 2
+		}
+		if retryAfter > maxRetryWait {
+			return nil, fmt.Errorf("%w, retry after %s", err, retryAfter)
+		}
+		time.Sleep(retryAfter)
+	}
+}
+
+// requestImage returns retryAfter >= 0 only when the request can be retried
+func (f *ImageFetcher) requestImage(url string) ([]byte, time.Duration, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return nil, err
+		return nil, -1, err
 	}
 	req.Header.Set("User-Agent", f.userAgent)
 	req.Header.Set("Accept", "image/*")
 	response, err := f.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusTooManyRequests {
+		seconds, _ := strconv.Atoi(response.Header.Get("Retry-After"))
+		return nil, time.Duration(seconds) * time.Second, fmt.Errorf("rate limited fetching image")
+	}
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code from image: %d", response.StatusCode)
+		return nil, -1, fmt.Errorf("unexpected status code from image: %d", response.StatusCode)
 	}
 	imgBytes, err := io.ReadAll(response.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read image body: %w", err)
+		return nil, 0, fmt.Errorf("failed to read image body: %w", err)
 	}
-	return imgBytes, nil
-}
-
-func (f *ImageFetcher) handleEOFPacket(packet external.Packet[inner.Metadata]) error {
-	f.mu.Lock()
-	state := f.clientStateFor(packet.ClientID)
-	state.hasEOF = true
-	state.expectedTotal = packet.Total
-	f.mu.Unlock()
-
-	return f.checkAndFinalize(packet.ClientID)
-}
-
-func (f *ImageFetcher) clientStateFor(clientID clientid.ID) *clientState {
-	state, ok := f.clientStates[clientID]
-	if !ok {
-		state = &clientState{}
-		f.clientStates[clientID] = state
-	}
-	return state
+	return imgBytes, -1, nil
 }

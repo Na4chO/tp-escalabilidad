@@ -24,10 +24,16 @@ func loadConfig() (client.ClientConfig, error) {
 		return client.ClientConfig{}, errors.New("INPUT_PATH environment variable is required")
 	}
 
+	outputPath := os.Getenv("OUTPUT_PATH")
+	if outputPath == "" {
+		return client.ClientConfig{}, errors.New("OUTPUT_PATH environment variable is required")
+	}
+
 	return client.ClientConfig{
 		ServerHost: serverHost,
 		ServerPort: serverPort,
 		InputPath:  inputPath,
+		OutputPath: outputPath,
 	}, nil
 }
 

@@ -38,7 +38,6 @@ type MetadataFilter struct {
 	mu                sync.Mutex
 	finished          map[clientid.ID]map[syncTarget]bool
 	imgFetcherCount   int
-	sentByPartition   map[clientid.ID]map[int]uint32
 }
 
 func NewMetadataFilter(cfg *config.Config) (*MetadataFilter, error) {
@@ -68,7 +67,6 @@ func NewMetadataFilter(cfg *config.Config) (*MetadataFilter, error) {
 		resultQueue:       resultQueue,
 		finished:          make(map[clientid.ID]map[syncTarget]bool),
 		imgFetcherCount:   cfg.ImageFetcherCount,
-		sentByPartition:   make(map[clientid.ID]map[int]uint32),
 	}
 	mf.running.Store(true)
 
@@ -99,14 +97,24 @@ func (mf *MetadataFilter) createSynchronizer(instanceID, exchangeName string, ta
 func (mf *MetadataFilter) Run() error {
 	go mf.handleSignals()
 
-	err := errors.Join(
-		mf.metadataQueue.StartConsuming(func(packet external.Packet[inner.Metadata], ack, nack func()) {
+	// StartConsuming blocks, so each consumer runs in its own goroutine
+	errs := make(chan error, 3)
+	go func() {
+		errs <- mf.metadataQueue.StartConsuming(func(packet external.Packet[inner.Metadata], ack, nack func()) {
 			mf.handleMetadataPacket(packet, ack, nack)
-		}),
-		mf.imageSync.StartConsuming(),
-		mf.resultsSync.StartConsuming(),
-		mf.closeMiddlewares(),
-	)
+		})
+	}()
+	go func() { errs <- mf.imageSync.StartConsuming() }()
+	go func() { errs <- mf.resultsSync.StartConsuming() }()
+
+	var firstErr error
+	for range 3 {
+		if err := <-errs; err != nil && firstErr == nil {
+			firstErr = err
+		}
+		mf.stop()
+	}
+	err := errors.Join(firstErr, mf.closeMiddlewares())
 
 	if mf.running.Load() {
 		return err
@@ -115,13 +123,19 @@ func (mf *MetadataFilter) Run() error {
 	return nil
 }
 
+func (mf *MetadataFilter) stop() {
+	_ = mf.metadataQueue.StopConsuming()
+	_ = mf.imageSync.StopConsuming()
+	_ = mf.resultsSync.StopConsuming()
+}
+
 func (mf *MetadataFilter) handleSignals() {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	<-signals
 	slog.Info("SIGTERM signal received")
 	mf.running.Store(false)
-	_ = mf.metadataQueue.StopConsuming()
+	mf.stop()
 }
 
 func (mf *MetadataFilter) closeMiddlewares() error {
@@ -154,8 +168,16 @@ func (mf *MetadataFilter) handleMetadataPacket(packet external.Packet[inner.Meta
 	ack()
 }
 
+// Marked as processed only after its outputs are sent, so the synchronizer never reports
+// a processed count ahead of the sent count
 func (mf *MetadataFilter) handleMetadata(clientID clientid.ID, metadata inner.Metadata) error {
-	mf.markProcessed(clientID)
+	if err := mf.filterMetadata(clientID, metadata); err != nil {
+		return err
+	}
+	return mf.markProcessed(clientID)
+}
+
+func (mf *MetadataFilter) filterMetadata(clientID clientid.ID, metadata inner.Metadata) error {
 	date, ok := parseDateModified(metadata.DateModified)
 	if !ok {
 		slog.Warn("Invalid date modified", "date", metadata.DateModified)
@@ -176,21 +198,10 @@ func (mf *MetadataFilter) handleMetadata(clientID clientid.ID, metadata inner.Me
 		mf.resultsSync.Sent(clientID)
 	}
 	if hasBiographySection(metadata.Sections) {
-		part := mf.imagePartition(metadata.ImageUrl)
-		key := fmt.Sprintf("img-%d", part)
-
-		packet := external.Packet[inner.Metadata]{
-			ClientID: clientID,
-			Payload:  metadata,
-		}
-		data, err := packet.Encode()
-		if err != nil {
+		packet := external.Packet[inner.Metadata]{ClientID: clientID, Payload: metadata}
+		if err := mf.sendImageCandidate(packet, mf.imagePartition(metadata.ImageUrl)); err != nil {
 			return err
 		}
-		if err := mf.imageCandidatesEx.SendTo(key, middleware.Message{Body: string(data)}); err != nil {
-			return err
-		}
-		mf.registerSentToPartition(clientID, part)
 		mf.imageSync.Sent(clientID)
 	}
 	return nil
@@ -212,13 +223,12 @@ func (mf *MetadataFilter) imagePartition(url string) int {
 	return int(h.Sum32()) % mf.imgFetcherCount
 }
 
-func (mf *MetadataFilter) registerSentToPartition(clientID clientid.ID, p int) {
-	mf.mu.Lock()
-	defer mf.mu.Unlock()
-	if mf.sentByPartition[clientID] == nil {
-		mf.sentByPartition[clientID] = make(map[int]uint32)
+func (mf *MetadataFilter) sendImageCandidate(packet external.Packet[inner.Metadata], partition int) error {
+	data, err := packet.Encode()
+	if err != nil {
+		return err
 	}
-	mf.sentByPartition[clientID][p]++
+	return mf.imageCandidatesEx.SendTo(fmt.Sprintf("img-%d", partition), middleware.Message{Body: string(data)})
 }
 
 func parseDateModified(value string) (time.Time, bool) {

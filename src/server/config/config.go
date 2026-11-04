@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -12,6 +13,7 @@ type Config struct {
 	ServerPort string
 	MomHost    string
 	MomPort    int
+	Queries    []uint8
 }
 
 func NewConfig() (*Config, error) {
@@ -39,11 +41,25 @@ func NewConfig() (*Config, error) {
 		return nil, errors.New("MOM_HOST environment variable is required")
 	}
 
+	// Queries whose EOF the server waits for before closing a client (all by default)
+	queries := []uint8{1, 2, 3, 4, 5}
+	if value := os.Getenv("QUERIES"); value != "" {
+		queries = nil
+		for _, field := range strings.Split(value, ",") {
+			query, err := strconv.ParseUint(strings.TrimSpace(field), 10, 8)
+			if err != nil {
+				return nil, errors.New("QUERIES must be a comma separated list of query numbers")
+			}
+			queries = append(queries, uint8(query))
+		}
+	}
+
 	return &Config{
 		ServerID:   serverID,
 		ServerHost: serverHost,
 		ServerPort: serverPort,
 		MomHost:    momHost,
 		MomPort:    momPort,
+		Queries:    queries,
 	}, nil
 }

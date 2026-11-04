@@ -21,6 +21,7 @@ type ClientConfig struct {
 	ServerHost string
 	ServerPort string
 	InputPath  string
+	OutputPath string
 }
 
 type Client struct {
@@ -61,7 +62,8 @@ func (client *Client) Run() error {
 	defer client.conn.Close()
 	go client.handleSignals()
 
-	// Lanzar goroutine para esperar resultados
+	results := make(chan error, 1)
+	go func() { results <- receiveResults(client.conn, client.config.OutputPath) }()
 
 	if err := client.sendArticles(); err != nil {
 		if !client.running.Load() {
@@ -70,6 +72,15 @@ func (client *Client) Run() error {
 		}
 		return fmt.Errorf("sending articles: %w", err)
 	}
+
+	if err := <-results; err != nil {
+		if !client.running.Load() {
+			slog.Info("Client stopped before receiving all results")
+			return nil
+		}
+		return fmt.Errorf("receiving results: %w", err)
+	}
+	slog.Info("Results received", "output", client.config.OutputPath)
 	return nil
 }
 

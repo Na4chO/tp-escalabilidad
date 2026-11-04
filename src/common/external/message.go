@@ -74,3 +74,11 @@ func readBody(reader io.Reader, body any) error {
 func WriteQueryResult(writer io.Writer, result inner.QueryResult) error {
 	return writeMessage(writer, QueryResult, result)
 }
+
+func ReadQueryResult(reader io.Reader) (inner.QueryResult, error) {
+	var result inner.QueryResult
+	if err := readBody(reader, &result); err != nil {
+		return inner.QueryResult{}, err
+	}
+	return result, nil
+}

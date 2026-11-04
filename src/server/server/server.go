@@ -18,8 +18,16 @@ import (
 	"github.com/Na4chO/tp-escalabilidad/server/config"
 )
 
+type queryProgress struct {
+	received uint32
+	total    uint32
+	eof      bool
+}
+
 type Server struct {
 	id            string
+	queries       []uint8
+	progress      map[clientid.ID]map[uint8]*queryProgress // only used by the results consumer
 	registry      *clientregistry.ClientRegistry
 	handler       *articleHandler.ArticleHandler
 	metadataQueue *common.PacketQueue[inner.Metadata]
@@ -60,6 +68,8 @@ func NewServer(cfg config.Config) (*Server, error) {
 	handler := articleHandler.NewArticleHandler(metadataQueue, abstractQueue)
 	sv := &Server{
 		id:            cfg.ServerID,
+		queries:       cfg.Queries,
+		progress:      map[clientid.ID]map[uint8]*queryProgress{},
 		registry:      clientregistry.NewClientRegistry(),
 		handler:       handler,
 		metadataQueue: metadataQueue,
@@ -179,22 +189,52 @@ func (s *Server) handleClientResponse(packet external.Packet[inner.QueryResult],
 		nack()
 		return
 	}
+
+	query := s.queryProgress(packet.ClientID, packet.Payload.QueryType)
 	if packet.IsEof {
-		s.registry.Remove(packet.ClientID)
-		if err := client.Conn.Close(); err != nil {
-			slog.Error("Closing connection", "err", err)
+		query.eof = true
+		query.total = packet.Total
+	} else {
+		if err := external.WriteQueryResult(client.Conn, packet.Payload); err != nil {
+			slog.Debug("While writing query result", "err", err)
+			s.finishClient(packet.ClientID, client)
+			ack()
+			return
 		}
-		ack()
-		return
+		query.received++
 	}
-	if err := external.WriteQueryResult(client.Conn, packet.Payload); err != nil {
-		s.registry.Remove(packet.ClientID)
-		if err := client.Conn.Close(); err != nil {
-			slog.Error("Closing connection", "err", err)
-		}
-		slog.Debug("While writing query result", "err", err)
-		ack()
-		return
+
+	if s.allQueriesDone(packet.ClientID) {
+		slog.Info("All queries finished", "client", packet.ClientID)
+		s.finishClient(packet.ClientID, client)
 	}
 	ack()
+}
+
+func (s *Server) queryProgress(clientID clientid.ID, queryType uint8) *queryProgress {
+	if s.progress[clientID] == nil {
+		s.progress[clientID] = map[uint8]*queryProgress{}
+	}
+	if s.progress[clientID][queryType] == nil {
+		s.progress[clientID][queryType] = &queryProgress{}
+	}
+	return s.progress[clientID][queryType]
+}
+
+func (s *Server) allQueriesDone(clientID clientid.ID) bool {
+	for _, queryType := range s.queries {
+		query := s.progress[clientID][queryType]
+		if query == nil || !query.eof || query.received != query.total {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) finishClient(clientID clientid.ID, client clientregistry.ClientState) {
+	s.registry.Remove(clientID)
+	delete(s.progress, clientID)
+	if err := client.Conn.Close(); err != nil {
+		slog.Error("Closing connection", "err", err)
+	}
 }
