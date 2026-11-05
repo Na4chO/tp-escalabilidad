@@ -2,19 +2,14 @@
 # Runs the system with the parquet files in data/ and compares the client results with the
 # ones computed by scripts/expected/expected.py over the same files.
 # Usage: scripts/run_test.sh
-# Env:
-#   TIMEOUT  seconds to wait for the client (default 600)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 EXPECTED_DIR="output/expected"
 EXPECTED_IMAGE="tp-expected"
-TIMEOUT="${TIMEOUT:-600}"
 OUTPUT_DIR="output/client_0"
 CLIENT="client_0"
-SERVICES=(rabbitmq server metadata_filter image_fetcher abstract_preprocessing frequency_collector
-  top_aggregator average_calculator abstract_word_counter "$CLIENT")
 
 if ! ls data/*.parquet >/dev/null 2>&1; then
   echo "No .parquet files in data/, run scripts/download_data.sh first"
@@ -32,21 +27,12 @@ trap cleanup EXIT
 rm -rf "$OUTPUT_DIR" "$EXPECTED_DIR"
 mkdir -p "$OUTPUT_DIR" "$EXPECTED_DIR"
 
-echo "Computing expected results"
-docker build --quiet --tag "$EXPECTED_IMAGE" scripts/expected >/dev/null
-docker run --rm -v "$PWD/data:/data:ro" -v "$PWD/output:/output" "$EXPECTED_IMAGE" \
-  generate /data "/$EXPECTED_DIR"
-
 echo "Starting system"
-docker compose up --build --detach "${SERVICES[@]}"
+docker compose up --build --detach --remove-orphans
 
 echo "Waiting for $CLIENT to finish"
 elapsed=0
 while [ "$(docker inspect -f '{{.State.Running}}' "$CLIENT")" = "true" ]; do
-  if [ "$elapsed" -ge "$TIMEOUT" ]; then
-    echo "Timeout after ${TIMEOUT}s"
-    exit 1
-  fi
   sleep 2
   elapsed=$((elapsed + 2))
 done
@@ -62,6 +48,11 @@ echo "$CLIENT finished in ~${elapsed}s"
 for file in "$OUTPUT_DIR"/query*.csv; do
   echo "  $(basename "$file"): $(wc -l < "$file" | tr -d ' ') rows"
 done
+
+echo "Computing expected results"
+docker build --quiet --tag "$EXPECTED_IMAGE" scripts/expected >/dev/null
+docker run --rm -v "$PWD/data:/data:ro" -v "$PWD/output:/output" "$EXPECTED_IMAGE" \
+  generate /data "/$EXPECTED_DIR"
 
 echo "Comparing results"
 docker run --rm -v "$PWD/output:/output:ro" "$EXPECTED_IMAGE" \

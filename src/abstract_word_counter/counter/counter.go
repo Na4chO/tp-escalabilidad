@@ -1,6 +1,7 @@
 package counter
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -32,12 +33,7 @@ type Counter struct {
 	pending map[clientid.ID]*pending
 }
 
-func NewCounter(connSettings middleware.ConnSettings) (*Counter, error) {
-	instanceID, err := os.Hostname()
-	if err != nil {
-		return nil, fmt.Errorf("getting instance id: %w", err)
-	}
-
+func NewCounter(instanceID string, connSettings middleware.ConnSettings) (*Counter, error) {
 	// TODO Check if necessary, maybe dir can be created in compose
 	if err := os.MkdirAll(countsDir, 0o755); err != nil {
 		return nil, fmt.Errorf("creating counts directory: %w", err)
@@ -122,11 +118,13 @@ func (c *Counter) handleInput(packet external.Packet[inner.AbstractWordCount], a
 	ack()
 }
 
-func (c *Counter) handleWordCount(clientID clientid.ID, wordCount inner.AbstractWordCount) error {
+func (c *Counter) handleWordCount(clientID clientid.ID, wordCount inner.AbstractWordCount) (err error) {
+	// Processed even on error so the count matches what was sent, otherwise the client never closes
+	defer func() { err = errors.Join(err, c.synchronizer.Processed(clientID)) }()
 	if err := appendCount(c.countsDir, clientID, wordCount.Url, wordCount.Count); err != nil {
 		return fmt.Errorf("storing word count: %w", err)
 	}
-	return c.synchronizer.Processed(clientID)
+	return nil
 }
 
 func (c *Counter) handleEof(clientID clientid.ID, total uint32) error {

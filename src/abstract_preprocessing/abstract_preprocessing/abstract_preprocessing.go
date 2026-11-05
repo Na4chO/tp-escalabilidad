@@ -74,25 +74,19 @@ func NewAbstractPreprocessing(cfg *config.Config) (*AbstractPreprocessing, error
 		finished:                 make(map[clientid.ID]map[syncTarget]bool),
 	}
 
-	instanceID, err := os.Hostname()
-	if err != nil {
-		_ = p.Close()
-		return nil, fmt.Errorf("getting instance id: %w", err)
-	}
-
-	p.wordsSync, err = p.createSynchronizer(instanceID, wordsSyncExchange, syncWords, connSettings)
+	p.wordsSync, err = p.createSynchronizer(cfg.InstanceID, wordsSyncExchange, syncWords, connSettings)
 	if err != nil {
 		_ = p.Close()
 		return nil, fmt.Errorf("creating words synchronizer: %w", err)
 	}
 
-	p.from2021Sync, err = p.createSynchronizer(instanceID, from2021SyncExchange, syncFrom2021, connSettings)
+	p.from2021Sync, err = p.createSynchronizer(cfg.InstanceID, from2021SyncExchange, syncFrom2021, connSettings)
 	if err != nil {
 		_ = p.Close()
 		return nil, fmt.Errorf("creating abstracts from 2021 synchronizer: %w", err)
 	}
 
-	p.until2020Sync, err = p.createSynchronizer(instanceID, until2020SyncExchange, syncUntil2020, connSettings)
+	p.until2020Sync, err = p.createSynchronizer(cfg.InstanceID, until2020SyncExchange, syncUntil2020, connSettings)
 	if err != nil {
 		_ = p.Close()
 		return nil, fmt.Errorf("creating abstracts until 2020 synchronizer: %w", err)
@@ -196,18 +190,17 @@ func (p *AbstractPreprocessing) handlePacket(packet external.Packet[inner.Abstra
 	ack()
 }
 
-func (p *AbstractPreprocessing) handleAbstract(packet external.Packet[inner.Abstract]) error {
+func (p *AbstractPreprocessing) handleAbstract(packet external.Packet[inner.Abstract]) (err error) {
+	// Processed even on error so the count matches what was sent, and after the sends so it never runs ahead of them
+	defer func() { err = errors.Join(err, p.markProcessed(packet.ClientID)) }()
+
 	words := extractWords(packet.Payload.Abstract)
 
 	if err := p.sendAbstractWords(packet.ClientID, packet.Payload.InLanguage, words); err != nil {
 		return err
 	}
 
-	if err := p.handleWordCount(packet, uint32(len(words))); err != nil {
-		return err
-	}
-
-	return p.markProcessed(packet.ClientID)
+	return p.handleWordCount(packet, uint32(len(words)))
 }
 
 func (p *AbstractPreprocessing) sendAbstractWords(clientID clientid.ID, inLanguage string, words []string) error {

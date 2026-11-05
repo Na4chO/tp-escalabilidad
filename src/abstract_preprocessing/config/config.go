@@ -9,6 +9,7 @@ import (
 type Config struct {
 	MomHost                  string
 	MomPort                  int
+	InstanceID               string
 	FrequencyCollectorAmount int
 	AverageCalculatorAmount  int
 }
@@ -24,6 +25,11 @@ func NewConfig() (*Config, error) {
 		return nil, errors.New("MOM_HOST environment variable is required")
 	}
 
+	instanceID := os.Getenv("INSTANCE_ID")
+	if instanceID == "" {
+		return nil, errors.New("INSTANCE_ID environment variable is required")
+	}
+
 	frequencyCollectorAmount, err := loadAmount("FREQUENCY_COLLECTOR_AMOUNT")
 	if err != nil {
 		return nil, err
@@ -37,6 +43,7 @@ func NewConfig() (*Config, error) {
 	return &Config{
 		MomHost:                  momHost,
 		MomPort:                  momPort,
+		InstanceID:               instanceID,
 		FrequencyCollectorAmount: frequencyCollectorAmount,
 		AverageCalculatorAmount:  averageCalculatorAmount,
 	}, nil

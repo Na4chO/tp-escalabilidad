@@ -15,6 +15,8 @@ import (
 type clientStats struct {
 	words     uint64
 	abstracts uint64
+	expected  uint64
+	hasEOF    bool
 }
 
 type Calculator struct {
@@ -62,7 +64,7 @@ func (c *Calculator) handleMessage(msg middleware.Message, ack func(), nack func
 	}
 
 	if packet.IsEof {
-		err = c.handleEof(packet.ClientID)
+		err = c.handleEof(packet.ClientID, packet.Total)
 	} else {
 		err = c.handleWordCount(packet.ClientID, packet.Payload)
 	}
@@ -75,19 +77,26 @@ func (c *Calculator) handleMessage(msg middleware.Message, ack func(), nack func
 }
 
 func (c *Calculator) handleWordCount(clientID clientid.ID, wordCount inner.AbstractWordCount) error {
-	stats, ok := c.clients[clientID]
-	if !ok {
-		stats = &clientStats{}
-		c.clients[clientID] = stats
-	}
+	stats := c.statsFor(clientID)
 	stats.words += uint64(wordCount.Count)
 	stats.abstracts++
-	return nil
+	return c.sendAverageIfDone(clientID, stats)
 }
 
-func (c *Calculator) handleEof(clientID clientid.ID) error {
+func (c *Calculator) handleEof(clientID clientid.ID, total uint32) error {
+	stats := c.statsFor(clientID)
+	stats.expected = uint64(total)
+	stats.hasEOF = true
+	return c.sendAverageIfDone(clientID, stats)
+}
+
+func (c *Calculator) sendAverageIfDone(clientID clientid.ID, stats *clientStats) error {
+	if !stats.hasEOF || stats.abstracts < stats.expected {
+		return nil
+	}
+
 	var average float64
-	if stats, ok := c.clients[clientID]; ok && stats.abstracts > 0 {
+	if stats.abstracts > 0 {
 		average = float64(stats.words) / float64(stats.abstracts)
 	}
 	delete(c.clients, clientID)
@@ -98,4 +107,13 @@ func (c *Calculator) handleEof(clientID clientid.ID) error {
 	}
 	slog.Info("Average calculated", "client", clientID, "average", average)
 	return c.averages.SendTo("average", middleware.Message{Body: string(data)})
+}
+
+func (c *Calculator) statsFor(clientID clientid.ID) *clientStats {
+	stats, ok := c.clients[clientID]
+	if !ok {
+		stats = &clientStats{}
+		c.clients[clientID] = stats
+	}
+	return stats
 }

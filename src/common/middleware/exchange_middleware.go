@@ -29,7 +29,7 @@ func NewExchangeMiddleware(exchange string, keys []string, connectionSettings Co
 		return nil, err
 	}
 
-	if err := channel.Qos(1, 0, false); err != nil {
+	if err := channel.Qos(prefetchCount, 0, false); err != nil {
 		_ = conn.Close()
 		_ = channel.Close()
 		return nil, err

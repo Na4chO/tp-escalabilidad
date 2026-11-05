@@ -167,11 +167,10 @@ func (mf *MetadataFilter) handleMetadataPacket(packet external.Packet[inner.Meta
 	ack()
 }
 
-func (mf *MetadataFilter) handleMetadata(clientID clientid.ID, metadata inner.Metadata) error {
-	if err := mf.filterMetadata(clientID, metadata); err != nil {
-		return err
-	}
-	return mf.markProcessed(clientID)
+func (mf *MetadataFilter) handleMetadata(clientID clientid.ID, metadata inner.Metadata) (err error) {
+	// Processed even on error so the count matches what was sent, and after the sends so it never runs ahead of them
+	defer func() { err = errors.Join(err, mf.markProcessed(clientID)) }()
+	return mf.filterMetadata(clientID, metadata)
 }
 
 func (mf *MetadataFilter) filterMetadata(clientID clientid.ID, metadata inner.Metadata) error {

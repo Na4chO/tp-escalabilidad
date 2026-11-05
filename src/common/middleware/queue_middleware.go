@@ -27,6 +27,12 @@ func NewQueueMiddleware(queueName string, connectionSettings ConnSettings) (Midd
 		return nil, err
 	}
 
+	if err := channel.Qos(prefetchCount, 0, false); err != nil {
+		_ = channel.Close()
+		_ = conn.Close()
+		return nil, err
+	}
+
 	queue, err := queueDeclare(queueName, channel)
 	if err != nil {
 		_ = channel.Close()
