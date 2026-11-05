@@ -198,7 +198,7 @@ func (s *Server) handleClientResponse(packet external.Packet[inner.QueryResult],
 		query.eof = true
 		query.total = packet.Total
 		slog.Info(fmt.Sprintf("EOF query %d received (%d/%d)", packet.Payload.QueryType, s.eofsReceived(packet.ClientID), queriesCount),
-			"client", packet.ClientID, "total", packet.Total, "received", query.received)
+			"client", packet.ClientID, "total", packet.Total)
 	}
 	for _, result := range packet.Items {
 		if err := external.WriteQueryResult(client.Conn, result); err != nil {

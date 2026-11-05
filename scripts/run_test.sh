@@ -47,17 +47,33 @@ running() {
 }
 
 total_files="$(ls data/*.parquet | wc -l | tr -d ' ')"
+# The expected results only depend on data/client_<i>. They start once every client sent its files, so they
+# don't take CPU from the system while it receives data, and run while it waits for the images of query 2
+expected_pids=()
+start_expected() {
+  echo "  Computing expected results of each client in the background"
+  for client in "${CLIENTS[@]}"; do
+    docker run --rm -v "$PWD/data:/data" -v "$PWD/output:/output" -e IMAGE_CACHE=/data/image_status.json \
+      "$EXPECTED_IMAGE" generate "/data/$client" "/output/expected/$client" > "output/expected/$client.log" 2>&1 &
+    expected_pids+=($!)
+  done
+}
+
 echo "Waiting for ${#CLIENTS[@]} clients to finish ($total_files files to send)"
 last_progress=""
 shown_eofs=0
 while running; do
   sleep 10
-  sent=0 done_clients=0
+  sent=0 sent_clients=0 done_clients=0
   for client in "${CLIENTS[@]}"; do
     logs="$(docker logs --since "$start" "$client" 2>&1 || true)"
     sent=$(( sent + $(grep -c "Reading file" <<< "$logs" || true) ))
+    sent_clients=$(( sent_clients + $(grep -c "Dataset sent" <<< "$logs" || true) ))
     done_clients=$(( done_clients + $(grep -c "Results received" <<< "$logs" || true) ))
   done
+  if [ "${#expected_pids[@]}" -eq 0 ] && [ "$sent_clients" -eq "${#CLIENTS[@]}" ]; then
+    start_expected
+  fi
   progress="sending file $sent of $total_files, $done_clients of ${#CLIENTS[@]} clients got every result"
   timestamp="[$(( ($(date +%s) - start) / 60 ))m $(( ($(date +%s) - start) % 60 ))s]"
   if [ "$progress" != "$last_progress" ]; then
@@ -83,14 +99,11 @@ for client in "${CLIENTS[@]}"; do
 done
 echo "System finished in $((elapsed / 60))m $((elapsed % 60))s (from startup until every client got its results)"
 
-echo "Computing expected results of each client in parallel"
-pids=()
-for client in "${CLIENTS[@]}"; do
-  docker run --rm -v "$PWD/data:/data" -v "$PWD/output:/output" -e IMAGE_CACHE=/data/image_status.json \
-    "$EXPECTED_IMAGE" generate "/data/$client" "/output/expected/$client" > "output/expected/$client.log" 2>&1 &
-  pids+=($!)
-done
-for pid in "${pids[@]}"; do
+if [ "${#expected_pids[@]}" -eq 0 ]; then
+  start_expected
+fi
+echo "Waiting for the expected results"
+for pid in "${expected_pids[@]}"; do
   wait "$pid"
 done
 
