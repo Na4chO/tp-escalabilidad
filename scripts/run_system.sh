@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Runs the system with the parquet files in data/, split among the clients of docker-compose.yaml by
-# scripts/split_data.sh, and compares the results of each client with the ones computed by
-# scripts/expected (a Go program) over its files, one client at a time.
-# Usage: scripts/run_test.sh   (the amount of clients comes from `make compose CLIENTS=N`)
+# scripts/split_data.sh, and compares the results of each client with output/expected, computed
+# beforehand by scripts/run_expected.sh.
+# Usage: scripts/run_system.sh   (the amount of clients comes from `make compose CLIENTS=N`)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -28,15 +28,13 @@ trap cleanup EXIT
 
 scripts/split_data.sh "${#CLIENTS[@]}"
 
-rm -rf output/client_* output/expected
-mkdir -p output/expected
+rm -rf output/client_*
 for client in "${CLIENTS[@]}"; do
   mkdir -p "output/$client"
 done
 
 echo "Building images"
 docker compose build --quiet
-docker build --quiet --tag "$EXPECTED_IMAGE" scripts/expected >/dev/null
 
 echo "Starting system"
 start="$(date +%s)"
@@ -86,24 +84,28 @@ for client in "${CLIENTS[@]}"; do
 done
 echo "System finished in $((elapsed / 60))m $((elapsed % 60))s (from startup until every client got its results)"
 
-# The system is no longer needed, stopping it frees its memory for the expected results
 cleanup
+
+if ! docker image inspect "$EXPECTED_IMAGE" >/dev/null 2>&1; then
+  echo "No expected results to compare with, run scripts/run_expected.sh"
+  exit 0
+fi
 
 failed=0
 for client in "${CLIENTS[@]}"; do
-  echo "Computing expected results of $client"
-  status=0
-  docker run --rm -v "$PWD/data:/data" -v "$PWD/output:/output" -e IMAGE_CACHE=/data/image_status.json \
-    "$EXPECTED_IMAGE" generate "/data/$client" "/output/expected/$client" > "output/expected/$client.log" 2>&1 || status=$?
-  if [ "$status" -ne 0 ]; then
-    reason=""
-    [ "$status" -eq 137 ] && reason=", killed, probably out of memory"
-    echo "FAIL expected results of $client (exit $status$reason), see output/expected/$client.log"
+  expected="output/expected/$client"
+  if [ ! -f "$expected/files.txt" ]; then
+    echo "SKIP $client: no expected results, run scripts/run_expected.sh"
     failed=1
     continue
   fi
-  echo "Comparing $client ($(ls "data/$client" | wc -l | tr -d ' ') files)"
+  if ! diff -q <(ls "data/$client") "$expected/files.txt" >/dev/null; then
+    echo "SKIP $client: its expected results are from other files, run scripts/run_expected.sh again"
+    failed=1
+    continue
+  fi
+  echo "Comparing $client ($(wc -l < "$expected/files.txt" | tr -d ' ') files)"
   docker run --rm -v "$PWD/output:/output:ro" "$EXPECTED_IMAGE" \
-    compare "/output/expected/$client" "/output/$client" 1 2 3 4 5 || failed=1
+    compare "/$expected" "/output/$client" 1 2 3 4 5 || failed=1
 done
 exit "$failed"

@@ -93,20 +93,12 @@ RABBITMQ = """  rabbitmq:
       - 15672:15672
 """
 
-
-def positive(value):
-    amount = int(value)
-    if amount < 1:
-        raise argparse.ArgumentTypeError("must be at least 1")
-    return amount
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generates docker-compose.yaml")
     for node in ["clients", "metadata-filter", "abstract-preprocessing", "frequency-collector", "top-aggregator",
                  "average-calculator", "word-counter"]:
-        parser.add_argument(f"--{node}", type=positive, default=1, help="instances (default 1)")
-    parser.add_argument("--batch-size", type=positive, default=1, help="max items per message (default 1)")
+        parser.add_argument(f"--{node}", type=int, default=1, help="instances (default 1)")
+    parser.add_argument("--batch-size", type=int, default=1, help="max items per message (default 1)")
     parser.add_argument("--output", default="docker-compose.yaml")
     args = parser.parse_args()
 
