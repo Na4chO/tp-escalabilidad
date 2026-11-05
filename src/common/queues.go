@@ -10,3 +10,5 @@ const (
 	ExchangeAbstractsUntil2020 = "abstractsUntil2020"
 	ExchangeImageCandidates    = "imageCandidatesExchange"
 )
+
+const ResultsBatchSize = 1

@@ -1,4 +1,4 @@
-package client_id
+package clientid
 
 import "strconv"
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/Na4chO/tp-escalabilidad/common/article"
 	"github.com/Na4chO/tp-escalabilidad/common/external/safeio"
+	"github.com/Na4chO/tp-escalabilidad/common/external/serializer"
 	"github.com/Na4chO/tp-escalabilidad/common/inner"
 )
 
@@ -18,16 +19,38 @@ const (
 	QueryResult
 )
 
-func WriteArticle(writer io.Writer, a article.Article) error {
-	return writeMessage(writer, Article, a)
+func WriteArticles(writer io.Writer, articles []article.Article) error {
+	message := []byte{byte(Article)}
+	message = append(message, serializer.SerializeUint32(uint32(len(articles)))...)
+	for _, a := range articles {
+		data, err := json.Marshal(a)
+		if err != nil {
+			return fmt.Errorf("encoding article: %w", err)
+		}
+		message = append(message, serializer.SerializeUint32(uint32(len(data)))...)
+		message = append(message, data...)
+	}
+	if err := safeio.WriteAll(writer, message); err != nil {
+		return fmt.Errorf("writing articles: %w", err)
+	}
+	return nil
 }
 
-func ReadArticle(reader io.Reader) (article.Article, error) {
-	var a article.Article
-	if err := readBody(reader, &a); err != nil {
-		return article.Article{}, err
+func ReadArticles[T any](reader io.Reader) ([]T, error) {
+	header, err := safeio.ReadAll(reader, serializer.UINT32_SIZE)
+	if err != nil {
+		return nil, fmt.Errorf("reading articles count: %w", err)
 	}
-	return a, nil
+	count := serializer.DeserializeUint32(header)
+	articles := make([]T, 0, count)
+	for range count {
+		var a T
+		if err := readBody(reader, &a); err != nil {
+			return nil, err
+		}
+		articles = append(articles, a)
+	}
+	return articles, nil
 }
 
 func WriteEndOfFile(writer io.Writer) error {

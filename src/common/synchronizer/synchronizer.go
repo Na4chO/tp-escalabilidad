@@ -24,13 +24,13 @@ type Synchronizer struct {
 	onFinished FinishedCallback
 
 	mu          sync.Mutex
-	processed   map[clientid.ID]uint32            // own processed count, sent in count messages
-	sent        map[clientid.ID]uint32            // own results sent, sent in finished messages
-	closing     map[clientid.ID]bool              // EOF known, counts are being exchanged
-	totals      map[clientid.ID]uint32            // expected total from the EOF
-	coordinator map[clientid.ID]bool              // sets instance to be coordinator for final EOF
-	peerCounts  map[clientid.ID]map[string]uint32 // last count of each instance, compared to total
-	peerSent    map[clientid.ID]map[string]uint32 // results sent by each instance, summed by coordinator
+	processed   map[clientid.ID]uint32
+	sent        map[clientid.ID]uint32
+	closing     map[clientid.ID]bool
+	totals      map[clientid.ID]uint32
+	coordinator map[clientid.ID]bool
+	peerCounts  map[clientid.ID]map[string]uint32
+	peerSent    map[clientid.ID]map[string]uint32
 }
 
 func NewSynchronizer(instanceID string, exchangeName string, connSettings middleware.ConnSettings, onSynced SyncedCallback, onFinished FinishedCallback) (*Synchronizer, error) {
@@ -66,11 +66,11 @@ func (s *Synchronizer) Close() error {
 	return s.exchange.Close()
 }
 
-func (s *Synchronizer) Processed(clientID clientid.ID) error {
+func (s *Synchronizer) Processed(clientID clientid.ID, count uint32) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.processed[clientID]++
+	s.processed[clientID] += count
 	if !s.closing[clientID] {
 		return nil
 	}

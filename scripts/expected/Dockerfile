@@ -1,5 +1,14 @@
-FROM python:3.12-slim
-RUN pip install --no-cache-dir pyarrow==21.0.0 nltk==3.9.1 \
-    && python -m nltk.downloader -d /usr/share/nltk_data stopwords
-COPY expected.py /expected.py
-ENTRYPOINT ["python", "/expected.py"]
+FROM golang:1.24-alpine3.23 AS builder
+
+WORKDIR /build
+COPY go.mod go.sum ./
+RUN go mod download
+COPY *.go ./
+COPY stopwords ./stopwords
+RUN CGO_ENABLED=0 GOOS=linux go build -o /expected .
+
+FROM busybox:latest
+# CA certificates for the HTTPS requests to Wikimedia
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=builder /expected /expected
+ENTRYPOINT ["/expected"]
