@@ -194,7 +194,12 @@ func (mf *MetadataFilter) filterMetadata(clientID clientid.ID, metadata inner.Me
 		mf.resultsSync.Sent(clientID)
 	}
 	if hasBiographySection(metadata.Sections) {
-		packet := external.Packet[inner.Metadata]{ClientID: clientID, Payload: metadata}
+		candidate := inner.ImageCandidateMetadata{
+			Url:      metadata.Url,
+			Name:     metadata.Name,
+			ImageUrl: metadata.ImageUrl,
+		}
+		packet := external.Packet[inner.ImageCandidateMetadata]{ClientID: clientID, Payload: candidate}
 		if err := mf.sendImageCandidate(packet, mf.imagePartition(metadata.ImageUrl)); err != nil {
 			return err
 		}
@@ -219,7 +224,7 @@ func (mf *MetadataFilter) imagePartition(url string) int {
 	return int(h.Sum32()) % mf.imgFetcherCount
 }
 
-func (mf *MetadataFilter) sendImageCandidate(packet external.Packet[inner.Metadata], partition int) error {
+func (mf *MetadataFilter) sendImageCandidate(packet external.Packet[inner.ImageCandidateMetadata], partition int) error {
 	data, err := packet.Encode()
 	if err != nil {
 		return err

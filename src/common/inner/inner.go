@@ -63,3 +63,9 @@ type QueryResult struct {
 	Name              string      `json:"name,omitempty"`
 	Image             []byte      `json:"image,omitempty"`
 }
+
+type ImageCandidateMetadata struct {
+	Url      string `json:"url"`
+	Name     string `json:"name"`
+	ImageUrl string `json:"imageUrl"`
+}

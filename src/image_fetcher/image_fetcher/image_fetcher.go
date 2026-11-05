@@ -119,7 +119,7 @@ func (f *ImageFetcher) closeMiddlewares() error {
 }
 
 func (f *ImageFetcher) handleImageCandidatesMessage(msg middleware.Message, ack func(), nack func()) {
-	packet, err := external.DecodePacket[inner.Metadata]([]byte(msg.Body))
+	packet, err := external.DecodePacket[inner.ImageCandidateMetadata]([]byte(msg.Body))
 	if err != nil {
 		slog.Error("While decoding image candidate packet", "err", err)
 		nack()
@@ -139,7 +139,7 @@ func (f *ImageFetcher) handleImageCandidatesMessage(msg middleware.Message, ack 
 	ack()
 }
 
-func (f *ImageFetcher) handleCandidate(clientID clientid.ID, metadata inner.Metadata) (err error) {
+func (f *ImageFetcher) handleCandidate(clientID clientid.ID, metadata inner.ImageCandidateMetadata) (err error) {
 	defer func() { err = errors.Join(err, f.synchronizer.Processed(clientID)) }()
 
 	if metadata.ImageUrl == "" {
@@ -158,7 +158,7 @@ func (f *ImageFetcher) handleCandidate(clientID clientid.ID, metadata inner.Meta
 	return f.sendResult(clientID, metadata, image)
 }
 
-func (f *ImageFetcher) sendResult(clientID clientid.ID, metadata inner.Metadata, image []byte) error {
+func (f *ImageFetcher) sendResult(clientID clientid.ID, metadata inner.ImageCandidateMetadata, image []byte) error {
 	if err := f.resultQueue.Send(external.Packet[inner.QueryResult]{
 		ClientID: clientID,
 		Payload: inner.QueryResult{
