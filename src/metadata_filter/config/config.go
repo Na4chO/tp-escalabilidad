@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"github.com/Na4chO/tp-escalabilidad/common"
 	"os"
 	"strconv"
 )
@@ -11,6 +12,7 @@ type Config struct {
 	MomPort           int
 	InstanceID        string
 	ImageFetcherCount int
+	BatchSize         int
 }
 
 func NewConfig() (*Config, error) {
@@ -34,10 +36,16 @@ func NewConfig() (*Config, error) {
 		return nil, errors.New("IMAGE_FETCHER_COUNT environment variable is required")
 	}
 
+	batchSize, err := common.LoadBatchSize()
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
 		MomHost:           momHost,
 		MomPort:           momPort,
 		InstanceID:        instanceID,
 		ImageFetcherCount: imageFetcherCount,
+		BatchSize:         batchSize,
 	}, nil
 }

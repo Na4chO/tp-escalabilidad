@@ -31,6 +31,7 @@ type sectionInfo struct {
 type MetadataFilter struct {
 	metadataQueue     *common.PacketQueue[inner.Metadata]
 	imageCandidatesEx middleware.Router
+	imageCandidates   *common.Batcher[inner.ImageCandidateMetadata]
 	resultQueue       *common.PacketQueue[inner.QueryResult]
 	running           atomic.Bool
 	resultsSync       *synchronizer.Synchronizer
@@ -43,12 +44,12 @@ type MetadataFilter struct {
 func NewMetadataFilter(cfg *config.Config) (*MetadataFilter, error) {
 	connSettings := middleware.ConnSettings{Hostname: cfg.MomHost, Port: cfg.MomPort}
 
-	metadataQueue, err := common.NewPacketQueue[inner.Metadata]("metadata", connSettings)
+	metadataQueue, err := common.NewPacketQueue[inner.Metadata]("metadata", connSettings, cfg.BatchSize)
 	if err != nil {
 		return nil, err
 	}
 
-	resultQueue, err := common.NewPacketQueue[inner.QueryResult]("queryResult", connSettings)
+	resultQueue, err := common.NewPacketQueue[inner.QueryResult]("queryResult", connSettings, common.ResultsBatchSize)
 	if err != nil {
 		metadataQueue.Close()
 		return nil, err
@@ -64,6 +65,7 @@ func NewMetadataFilter(cfg *config.Config) (*MetadataFilter, error) {
 	mf := &MetadataFilter{
 		metadataQueue:     metadataQueue,
 		imageCandidatesEx: imageCandidatesEx,
+		imageCandidates:   common.NewBatcher(cfg.BatchSize, common.ExchangeSender[inner.ImageCandidateMetadata](imageCandidatesEx)),
 		resultQueue:       resultQueue,
 		finished:          make(map[clientid.ID]map[syncTarget]bool),
 		imgFetcherCount:   cfg.ImageFetcherCount,
@@ -159,7 +161,7 @@ func (mf *MetadataFilter) handleMetadataPacket(packet external.Packet[inner.Meta
 		return
 	}
 
-	if err := mf.handleMetadata(packet.ClientID, packet.Payload); err != nil {
+	if err := mf.handleMetadata(packet.ClientID, packet.Items); err != nil {
 		slog.Error("While handling metadata", "err", err)
 		nack()
 		return
@@ -167,10 +169,12 @@ func (mf *MetadataFilter) handleMetadataPacket(packet external.Packet[inner.Meta
 	ack()
 }
 
-func (mf *MetadataFilter) handleMetadata(clientID clientid.ID, metadata inner.Metadata) (err error) {
-	// Processed even on error so the count matches what was sent, and after the sends so it never runs ahead of them
-	defer func() { err = errors.Join(err, mf.markProcessed(clientID)) }()
-	return mf.filterMetadata(clientID, metadata)
+func (mf *MetadataFilter) handleMetadata(clientID clientid.ID, batch []inner.Metadata) (err error) {
+	defer func() { err = errors.Join(err, mf.markProcessed(clientID, uint32(len(batch)))) }()
+	for _, metadata := range batch {
+		err = errors.Join(err, mf.filterMetadata(clientID, metadata))
+	}
+	return err
 }
 
 func (mf *MetadataFilter) filterMetadata(clientID clientid.ID, metadata inner.Metadata) error {
@@ -199,8 +203,7 @@ func (mf *MetadataFilter) filterMetadata(clientID clientid.ID, metadata inner.Me
 			Name:     metadata.Name,
 			ImageUrl: metadata.ImageUrl,
 		}
-		packet := external.Packet[inner.ImageCandidateMetadata]{ClientID: clientID, Payload: candidate}
-		if err := mf.sendImageCandidate(packet, mf.imagePartition(metadata.ImageUrl)); err != nil {
+		if err := mf.imageCandidates.Add(clientID, imageKey(mf.imagePartition(metadata.ImageUrl)), candidate); err != nil {
 			return err
 		}
 		mf.imageSync.Sent(clientID)
@@ -224,12 +227,17 @@ func (mf *MetadataFilter) imagePartition(url string) int {
 	return int(h.Sum32()) % mf.imgFetcherCount
 }
 
-func (mf *MetadataFilter) sendImageCandidate(packet external.Packet[inner.ImageCandidateMetadata], partition int) error {
-	data, err := packet.Encode()
+func (mf *MetadataFilter) sendImageCandidatesEOF(clientID clientid.ID, total uint32) error {
+	data, err := external.Packet[inner.ImageCandidateMetadata]{ClientID: clientID, IsEof: true, Total: total}.Encode()
 	if err != nil {
 		return err
 	}
-	return mf.imageCandidatesEx.SendTo(fmt.Sprintf("img-%d", partition), middleware.Message{Body: string(data)})
+	key := imageKey(common.ClientPartition(clientID, mf.imgFetcherCount))
+	return mf.imageCandidatesEx.SendTo(key, middleware.Message{Body: string(data)})
+}
+
+func imageKey(partition int) string {
+	return fmt.Sprintf("img-%d", partition)
 }
 
 func parseDateModified(value string) (time.Time, bool) {

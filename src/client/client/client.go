@@ -22,12 +22,14 @@ type ClientConfig struct {
 	ServerPort string
 	InputPath  string
 	OutputPath string
+	BatchSize  int
 }
 
 type Client struct {
 	conn    net.Conn
 	running atomic.Bool
 	config  ClientConfig
+	batch   []article.Article
 }
 
 func NewClient(config ClientConfig) (*Client, error) {
@@ -104,6 +106,9 @@ func (client *Client) sendArticles() error {
 		}
 	}
 
+	if err := client.flushArticles(); err != nil {
+		return err
+	}
 	if err := external.WriteEndOfFile(client.conn); err != nil {
 		return err
 	}
@@ -117,7 +122,20 @@ func (client *Client) sendArticles() error {
 }
 
 func (client *Client) handleArticle(a article.Article) error {
-	return external.WriteArticle(client.conn, a)
+	client.batch = append(client.batch, a)
+	if len(client.batch) < client.config.BatchSize {
+		return nil
+	}
+	return client.flushArticles()
+}
+
+func (client *Client) flushArticles() error {
+	if len(client.batch) == 0 {
+		return nil
+	}
+	err := external.WriteArticles(client.conn, client.batch)
+	client.batch = client.batch[:0]
+	return err
 }
 
 func (client *Client) handleSignals() {

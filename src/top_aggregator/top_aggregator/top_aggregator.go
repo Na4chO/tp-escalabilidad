@@ -43,7 +43,7 @@ func NewTopAggregator(cfg *config.Config) (*TopAggregator, error) {
 		return nil, err
 	}
 
-	resultQueue, err := common.NewPacketQueue[inner.QueryResult](common.QueueQueryResult, connSettings)
+	resultQueue, err := common.NewPacketQueue[inner.QueryResult](common.QueueQueryResult, connSettings, common.ResultsBatchSize)
 	if err != nil {
 		partialTopExchange.Close()
 		return nil, err
@@ -121,16 +121,18 @@ func (ta *TopAggregator) handlePartialTopPacket(packet external.Packet[inner.Par
 func (ta *TopAggregator) handleDataPacket(packet external.Packet[inner.PartialTop]) error {
 	state := ta.clientStateFor(packet.ClientID)
 
-	incoming := packet.Payload.Top
-	slices.SortFunc(incoming, func(a, b inner.WordCount) int {
-		if byCount := cmp.Compare(b.Count, a.Count); byCount != 0 {
-			return byCount
-		}
-		return cmp.Compare(a.Word, b.Word)
-	})
+	for _, partialTop := range packet.Items {
+		incoming := partialTop.Top
+		slices.SortFunc(incoming, func(a, b inner.WordCount) int {
+			if byCount := cmp.Compare(b.Count, a.Count); byCount != 0 {
+				return byCount
+			}
+			return cmp.Compare(a.Word, b.Word)
+		})
 
-	state.topWords = mergeTops(state.topWords, incoming, ta.topSize)
-	state.receivedCount++
+		state.topWords = mergeTops(state.topWords, incoming, ta.topSize)
+		state.receivedCount++
+	}
 
 	return ta.checkAndFinalize(packet.ClientID, state)
 }

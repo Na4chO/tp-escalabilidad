@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/Na4chO/tp-escalabilidad/abstract_word_counter/counter"
+	"github.com/Na4chO/tp-escalabilidad/common"
 	"github.com/Na4chO/tp-escalabilidad/common/middleware"
 )
 
@@ -38,7 +39,13 @@ func run() int {
 		return 1
 	}
 
-	wordCounter, err := counter.NewCounter(instanceID, connSettings)
+	batchSize, err := common.LoadBatchSize()
+	if err != nil {
+		slog.Error("While loading config", "err", err)
+		return 1
+	}
+
+	wordCounter, err := counter.NewCounter(instanceID, connSettings, batchSize)
 	if err != nil {
 		slog.Error("While initializing abstract word counter", "err", err)
 		return 1

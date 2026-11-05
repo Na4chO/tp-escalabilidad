@@ -29,7 +29,7 @@ type queryProgress struct {
 
 type Server struct {
 	id            string
-	progress      map[clientid.ID]map[uint8]*queryProgress // only used by the results consumer
+	progress      map[clientid.ID]map[uint8]*queryProgress
 	registry      *clientregistry.ClientRegistry
 	handler       *articleHandler.ArticleHandler
 	metadataQueue *common.PacketQueue[inner.Metadata]
@@ -42,18 +42,18 @@ type Server struct {
 func NewServer(cfg config.Config) (*Server, error) {
 	connSettings := middleware.ConnSettings{Hostname: cfg.MomHost, Port: cfg.MomPort}
 
-	resultsQueue, err := common.NewPacketQueue[inner.QueryResult](common.QueueQueryResult, connSettings)
+	resultsQueue, err := common.NewPacketQueue[inner.QueryResult](common.QueueQueryResult, connSettings, common.ResultsBatchSize)
 	if err != nil {
 		return nil, err
 	}
 
-	metadataQueue, err := common.NewPacketQueue[inner.Metadata](common.QueueMetadata, connSettings)
+	metadataQueue, err := common.NewPacketQueue[inner.Metadata](common.QueueMetadata, connSettings, cfg.BatchSize)
 	if err != nil {
 		resultsQueue.Close()
 		return nil, err
 	}
 
-	abstractQueue, err := common.NewPacketQueue[inner.Abstract](common.QueueAbstract, connSettings)
+	abstractQueue, err := common.NewPacketQueue[inner.Abstract](common.QueueAbstract, connSettings, cfg.BatchSize)
 	if err != nil {
 		resultsQueue.Close()
 		metadataQueue.Close()
@@ -150,19 +150,21 @@ loop:
 
 		switch msgType {
 		case external.Article:
-			a, err := external.ReadArticle(conn)
+			articles, err := external.ReadArticles[articleHandler.Article](conn)
 			if err != nil {
-				slog.Debug("While reading article", "err", err)
+				slog.Debug("While reading articles", "err", err)
 				s.registry.Remove(clientID)
 				conn.Close()
 				return
 			}
 
-			if err := s.handler.HandleArticle(clientID, a); err != nil {
-				slog.Debug("While handling article", "err", err)
-				s.registry.Remove(clientID)
-				conn.Close()
-				return
+			for _, a := range articles {
+				if err := s.handler.HandleArticle(clientID, a); err != nil {
+					slog.Debug("While handling article", "err", err)
+					s.registry.Remove(clientID)
+					conn.Close()
+					return
+				}
 			}
 
 		case external.EndOfFile:
@@ -191,20 +193,21 @@ func (s *Server) handleClientResponse(packet external.Packet[inner.QueryResult],
 		return
 	}
 
-	query := s.queryProgress(packet.ClientID, packet.Payload.QueryType)
 	if packet.IsEof {
+		query := s.queryProgress(packet.ClientID, packet.Payload.QueryType)
 		query.eof = true
 		query.total = packet.Total
 		slog.Info(fmt.Sprintf("EOF query %d received (%d/%d)", packet.Payload.QueryType, s.eofsReceived(packet.ClientID), queriesCount),
 			"client", packet.ClientID, "total", packet.Total, "received", query.received)
-	} else {
-		if err := external.WriteQueryResult(client.Conn, packet.Payload); err != nil {
+	}
+	for _, result := range packet.Items {
+		if err := external.WriteQueryResult(client.Conn, result); err != nil {
 			slog.Debug("While writing query result", "err", err)
 			s.finishClient(packet.ClientID, client)
 			ack()
 			return
 		}
-		query.received++
+		s.queryProgress(packet.ClientID, result.QueryType).received++
 	}
 
 	if s.allQueriesDone(packet.ClientID) {

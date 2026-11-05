@@ -35,10 +35,10 @@ func (t syncTarget) String() string {
 	}
 }
 
-func (fc *FrequencyCollector) markProcessed(clientID clientid.ID) error {
+func (fc *FrequencyCollector) markProcessed(clientID clientid.ID, count uint32) error {
 	return errors.Join(
-		fc.partialTopSync.Processed(clientID),
-		fc.resultsSync.Processed(clientID),
+		fc.partialTopSync.Processed(clientID, count),
+		fc.resultsSync.Processed(clientID, count),
 	)
 }
 
@@ -51,6 +51,9 @@ func (fc *FrequencyCollector) onSynced(clientID clientid.ID, target syncTarget) 
 	case syncPartialTops:
 		fc.flushPartialTop(clientID)
 	case syncResults:
+		if err := fc.resultQueue.Flush(clientID); err != nil {
+			slog.Error("While flushing results", "client", clientID, "err", err)
+		}
 		if err := fc.resultsSync.Finished(clientID); err != nil {
 			slog.Error("While sending finished", "client", clientID, "output", target, "err", err)
 		}
@@ -72,7 +75,8 @@ func (fc *FrequencyCollector) flushPartialTop(clientID clientid.ID) {
 	if len(top) > 0 {
 		if err := fc.sendPartialTop(clientID, external.Packet[inner.PartialTop]{
 			ClientID: clientID,
-			Payload:  inner.PartialTop{Top: top},
+			Count:    1,
+			Items:    []inner.PartialTop{{Top: top}},
 		}); err != nil {
 			slog.Error("While sending partial top", "client", clientID, "err", err)
 		} else {

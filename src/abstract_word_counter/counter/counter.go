@@ -33,7 +33,7 @@ type Counter struct {
 	pending map[clientid.ID]*pending
 }
 
-func NewCounter(instanceID string, connSettings middleware.ConnSettings) (*Counter, error) {
+func NewCounter(instanceID string, connSettings middleware.ConnSettings, batchSize int) (*Counter, error) {
 	// TODO Check if necessary, maybe dir can be created in compose
 	if err := os.MkdirAll(countsDir, 0o755); err != nil {
 		return nil, fmt.Errorf("creating counts directory: %w", err)
@@ -41,7 +41,7 @@ func NewCounter(instanceID string, connSettings middleware.ConnSettings) (*Count
 
 	c := &Counter{countsDir: countsDir, pending: map[clientid.ID]*pending{}}
 
-	input, err := common.NewPacketQueue[inner.AbstractWordCount](common.QueueAbstractsFrom2021, connSettings)
+	input, err := common.NewPacketQueue[inner.AbstractWordCount](common.QueueAbstractsFrom2021, connSettings, batchSize)
 	if err != nil {
 		return nil, fmt.Errorf("creating input queue: %w", err)
 	}
@@ -59,7 +59,7 @@ func NewCounter(instanceID string, connSettings middleware.ConnSettings) (*Count
 		return nil, fmt.Errorf("creating averages exchange: %w", err)
 	}
 
-	results, err := common.NewPacketQueue[inner.QueryResult](common.QueueQueryResult, connSettings)
+	results, err := common.NewPacketQueue[inner.QueryResult](common.QueueQueryResult, connSettings, common.ResultsBatchSize)
 	if err != nil {
 		input.Close()
 		syncer.Close()
@@ -108,7 +108,7 @@ func (c *Counter) handleInput(packet external.Packet[inner.AbstractWordCount], a
 	if packet.IsEof {
 		err = c.handleEof(packet.ClientID, packet.Total)
 	} else {
-		err = c.handleWordCount(packet.ClientID, packet.Payload)
+		err = c.handleWordCounts(packet.ClientID, packet.Items)
 	}
 	if err != nil {
 		slog.Error("While handling message", "client", packet.ClientID, "err", err)
@@ -118,13 +118,14 @@ func (c *Counter) handleInput(packet external.Packet[inner.AbstractWordCount], a
 	ack()
 }
 
-func (c *Counter) handleWordCount(clientID clientid.ID, wordCount inner.AbstractWordCount) (err error) {
-	// Processed even on error so the count matches what was sent, otherwise the client never closes
-	defer func() { err = errors.Join(err, c.synchronizer.Processed(clientID)) }()
-	if err := appendCount(c.countsDir, clientID, wordCount.Url, wordCount.Count); err != nil {
-		return fmt.Errorf("storing word count: %w", err)
+func (c *Counter) handleWordCounts(clientID clientid.ID, batch []inner.AbstractWordCount) (err error) {
+	defer func() { err = errors.Join(err, c.synchronizer.Processed(clientID, uint32(len(batch)))) }()
+	for _, wordCount := range batch {
+		if appendErr := appendCount(c.countsDir, clientID, wordCount.Url, wordCount.Count); appendErr != nil {
+			err = errors.Join(err, fmt.Errorf("storing word count: %w", appendErr))
+		}
 	}
-	return nil
+	return err
 }
 
 func (c *Counter) handleEof(clientID clientid.ID, total uint32) error {
@@ -188,6 +189,9 @@ func (c *Counter) filter(clientID clientid.ID, average float64) {
 	if err := removeCounts(c.countsDir, clientID); err != nil {
 		slog.Error("While removing counts file", "client", clientID, "err", err)
 	}
+	if err := c.results.Flush(clientID); err != nil {
+		slog.Error("While flushing results", "client", clientID, "err", err)
+	}
 	if err := c.synchronizer.Finished(clientID); err != nil {
 		slog.Error("While sending finished", "client", clientID, "err", err)
 	}
@@ -215,12 +219,9 @@ func (c *Counter) sendResults(clientID clientid.ID, average float64) error {
 }
 
 func (c *Counter) sendResult(clientID clientid.ID, url string, count uint32) error {
-	return c.results.Send(external.Packet[inner.QueryResult]{
-		ClientID: clientID,
-		Payload: inner.QueryResult{
-			QueryType: inner.QueryAbstractAboveAverage,
-			Url:       url,
-			WordCount: count,
-		},
+	return c.results.SendData(clientID, inner.QueryResult{
+		QueryType: inner.QueryAbstractAboveAverage,
+		Url:       url,
+		WordCount: count,
 	})
 }

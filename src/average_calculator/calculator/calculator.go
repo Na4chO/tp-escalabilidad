@@ -66,7 +66,7 @@ func (c *Calculator) handleMessage(msg middleware.Message, ack func(), nack func
 	if packet.IsEof {
 		err = c.handleEof(packet.ClientID, packet.Total)
 	} else {
-		err = c.handleWordCount(packet.ClientID, packet.Payload)
+		err = c.handleWordCounts(packet.ClientID, packet.Items)
 	}
 	if err != nil {
 		slog.Error("While handling message", "client", packet.ClientID, "err", err)
@@ -76,10 +76,12 @@ func (c *Calculator) handleMessage(msg middleware.Message, ack func(), nack func
 	ack()
 }
 
-func (c *Calculator) handleWordCount(clientID clientid.ID, wordCount inner.AbstractWordCount) error {
+func (c *Calculator) handleWordCounts(clientID clientid.ID, batch []inner.AbstractWordCount) error {
 	stats := c.statsFor(clientID)
-	stats.words += uint64(wordCount.Count)
-	stats.abstracts++
+	for _, wordCount := range batch {
+		stats.words += uint64(wordCount.Count)
+		stats.abstracts++
+	}
 	return c.sendAverageIfDone(clientID, stats)
 }
 

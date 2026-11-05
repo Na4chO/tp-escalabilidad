@@ -48,7 +48,7 @@ func NewFrequencyCollector(cfg *config.Config) (*FrequencyCollector, error) {
 		return nil, err
 	}
 
-	resultQueue, err := common.NewPacketQueue[inner.QueryResult](common.QueueQueryResult, connSettings)
+	resultQueue, err := common.NewPacketQueue[inner.QueryResult](common.QueueQueryResult, connSettings, common.ResultsBatchSize)
 	if err != nil {
 		partialTopsExchange.Close()
 		wordsExchange.Close()
@@ -65,7 +65,6 @@ func NewFrequencyCollector(cfg *config.Config) (*FrequencyCollector, error) {
 		finished:            make(map[clientid.ID]map[syncTarget]bool),
 	}
 
-	// The partition is unique per instance, so it works as the synchronizer instance id
 	instanceID := strconv.Itoa(cfg.ID)
 
 	fc.partialTopSync, err = fc.createSynchronizer(instanceID, partialTopsSyncExchange, syncPartialTops, connSettings)
@@ -180,18 +179,20 @@ func (fc *FrequencyCollector) handleSignals() {
 }
 
 func (fc *FrequencyCollector) handleAbstractWords(packet external.Packet[inner.AbstractWords]) (err error) {
-	// Processed even on error so the count matches what was sent, and after the sends so it never runs ahead of them
-	defer func() { err = errors.Join(err, fc.markProcessed(packet.ClientID)) }()
+	defer func() { err = errors.Join(err, fc.markProcessed(packet.ClientID, uint32(len(packet.Items)))) }()
 
-	intersections := fc.updateFrequencies(packet.ClientID, packet.Payload)
-
-	if len(intersections) > 0 {
-		if err := fc.sendIntersections(packet.ClientID, intersections); err != nil {
-			return err
+	for _, abstractWords := range packet.Items {
+		intersections := fc.updateFrequencies(packet.ClientID, abstractWords)
+		if len(intersections) == 0 {
+			continue
+		}
+		if sendErr := fc.sendIntersections(packet.ClientID, intersections); sendErr != nil {
+			err = errors.Join(err, sendErr)
+			continue
 		}
 		fc.resultsSync.Sent(packet.ClientID)
 	}
-	return nil
+	return err
 }
 
 func (fc *FrequencyCollector) handleEOFPacket(packet external.Packet[inner.AbstractWords]) error {

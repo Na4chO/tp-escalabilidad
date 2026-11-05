@@ -5,7 +5,6 @@ import (
 	"slices"
 
 	clientid "github.com/Na4chO/tp-escalabilidad/common/client_id"
-	"github.com/Na4chO/tp-escalabilidad/common/external"
 	"github.com/Na4chO/tp-escalabilidad/common/inner"
 )
 
@@ -61,12 +60,9 @@ func isIntersection(inLanguage string, wordFreq *idiomsFrequency) bool {
 }
 
 func (fc *FrequencyCollector) sendIntersections(clientID clientid.ID, intersections []string) error {
-	return fc.resultQueue.Send(external.Packet[inner.QueryResult]{
-		ClientID: clientID,
-		Payload: inner.QueryResult{
-			QueryType:         inner.QueryIntersections,
-			IntersectionWords: intersections,
-		},
+	return fc.resultQueue.SendData(clientID, inner.QueryResult{
+		QueryType:         inner.QueryIntersections,
+		IntersectionWords: intersections,
 	})
 }
 

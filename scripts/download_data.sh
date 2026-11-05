@@ -7,7 +7,7 @@ set -euo pipefail
 DATASET="wikimedia-foundation/wikipedia-structured-contents"
 API="https://www.kaggle.com/api/v1/datasets"
 DATA_DIR="$(cd "$(dirname "$0")/.." && pwd)/data"
-FRACTION="${1:-0.1}"
+FRACTION="${1:-0.25}"
 PARALLEL_DOWNLOADS=4
 
 # Lists every parquet of the dataset (the API pages by 200) and keeps the first files of each language

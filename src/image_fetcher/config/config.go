@@ -7,12 +7,11 @@ import (
 )
 
 type Config struct {
-	MomHost        string
-	MomPort        int
-	UserAgent      string
-	ImageCacheSize int
-	Partition      int
-	// Bandwidth limit of this instance for the Wikimedia downloads
+	MomHost          string
+	MomPort          int
+	UserAgent        string
+	ImageCacheSize   int
+	Partition        int
 	DownloadRateMbps float64
 }
 

@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"github.com/Na4chO/tp-escalabilidad/common"
 	"os"
 	"strconv"
 )
@@ -12,6 +13,7 @@ type Config struct {
 	InstanceID               string
 	FrequencyCollectorAmount int
 	AverageCalculatorAmount  int
+	BatchSize                int
 }
 
 func NewConfig() (*Config, error) {
@@ -40,12 +42,18 @@ func NewConfig() (*Config, error) {
 		return nil, err
 	}
 
+	batchSize, err := common.LoadBatchSize()
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
 		MomHost:                  momHost,
 		MomPort:                  momPort,
 		InstanceID:               instanceID,
 		FrequencyCollectorAmount: frequencyCollectorAmount,
 		AverageCalculatorAmount:  averageCalculatorAmount,
+		BatchSize:                batchSize,
 	}, nil
 }
 

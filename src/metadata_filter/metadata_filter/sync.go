@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/Na4chO/tp-escalabilidad/common"
 	clientid "github.com/Na4chO/tp-escalabilidad/common/client_id"
 	"github.com/Na4chO/tp-escalabilidad/common/external"
 	"github.com/Na4chO/tp-escalabilidad/common/inner"
@@ -34,10 +33,10 @@ func (t syncTarget) String() string {
 	}
 }
 
-func (mf *MetadataFilter) markProcessed(clientID clientid.ID) error {
+func (mf *MetadataFilter) markProcessed(clientID clientid.ID, count uint32) error {
 	return errors.Join(
-		mf.resultsSync.Processed(clientID),
-		mf.imageSync.Processed(clientID),
+		mf.resultsSync.Processed(clientID, count),
+		mf.imageSync.Processed(clientID, count),
 	)
 }
 
@@ -48,10 +47,16 @@ func (mf *MetadataFilter) onSynced(clientID clientid.ID, target syncTarget) {
 
 	switch target {
 	case syncImages:
+		if err := mf.imageCandidates.Flush(clientID); err != nil {
+			slog.Error("While flushing image candidates", "client", clientID, "err", err)
+		}
 		if err := mf.imageSync.Finished(clientID); err != nil {
 			slog.Error("While sending finished for images sync", "client", clientID, "output", target, "err", err)
 		}
 	case syncResults:
+		if err := mf.resultQueue.Flush(clientID); err != nil {
+			slog.Error("While flushing results", "client", clientID, "err", err)
+		}
 		if err := mf.resultsSync.Finished(clientID); err != nil {
 			slog.Error("While sending finished for results sync", "client", clientID, "output", target, "err", err)
 		}
@@ -64,11 +69,7 @@ func (mf *MetadataFilter) onFinished(clientID clientid.ID, target syncTarget, to
 	var err error
 	switch target {
 	case syncImages:
-		err = mf.sendImageCandidate(external.Packet[inner.Metadata]{
-			ClientID: clientID,
-			IsEof:    true,
-			Total:    total,
-		}, common.ClientPartition(clientID, mf.imgFetcherCount))
+		err = mf.sendImageCandidatesEOF(clientID, total)
 	case syncResults:
 		err = mf.resultQueue.Send(external.Packet[inner.QueryResult]{
 			ClientID: clientID,

@@ -66,11 +66,11 @@ func (s *Synchronizer) Close() error {
 	return s.exchange.Close()
 }
 
-func (s *Synchronizer) Processed(clientID clientid.ID) error {
+func (s *Synchronizer) Processed(clientID clientid.ID, count uint32) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.processed[clientID]++
+	s.processed[clientID] += count
 	if !s.closing[clientID] {
 		return nil
 	}

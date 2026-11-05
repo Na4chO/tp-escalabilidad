@@ -5,10 +5,23 @@ import (
 	"strconv"
 
 	"github.com/Na4chO/tp-escalabilidad/common"
-	"github.com/Na4chO/tp-escalabilidad/common/article"
 	clientid "github.com/Na4chO/tp-escalabilidad/common/client_id"
 	"github.com/Na4chO/tp-escalabilidad/common/inner"
 )
+
+type Article struct {
+	Abstract     string `json:"abstract"`
+	DateModified int64  `json:"dateModified"`
+	Name         string `json:"name"`
+	Url          string `json:"url"`
+	Sections     string `json:"sections"`
+	InLanguage   struct {
+		Identifier string `json:"identifier"`
+	} `json:"inLanguage"`
+	Image struct {
+		ContentUrl string `json:"content_url"`
+	} `json:"image"`
+}
 
 type ArticleHandler struct {
 	metadataQueue *common.PacketQueue[inner.Metadata]
@@ -19,13 +32,13 @@ func NewArticleHandler(metadataQueue *common.PacketQueue[inner.Metadata], abstra
 	return &ArticleHandler{metadataQueue, abstractQueue}
 }
 
-func (articleHandler *ArticleHandler) HandleArticle(clientID clientid.ID, a article.Article) error {
+func (articleHandler *ArticleHandler) HandleArticle(clientID clientid.ID, a Article) error {
 	dateModified := strconv.FormatInt(a.DateModified, 10)
-	inLanguage, ok := getLang(a.InLanguage)
-	if !ok {
-		return fmt.Errorf("language %s not recognized", a.InLanguage)
+	inLanguage := a.InLanguage.Identifier
+	if inLanguage == "" {
+		return fmt.Errorf("article %s has no language", a.Url)
 	}
-	imageURL := getImg(a.Image)
+	imageURL := a.Image.ContentUrl
 
 	metadata := inner.Metadata{
 		Url:          a.Url,
@@ -52,19 +65,4 @@ func (articleHandler *ArticleHandler) HandleEOF(clientID clientid.ID) error {
 		return err
 	}
 	return articleHandler.abstractQueue.SendEOF(clientID)
-}
-
-func getLang(value map[string]any) (string, bool) {
-	identifier, ok := value["identifier"].(string)
-	if !ok || identifier == "" {
-		return "", false
-	}
-	return identifier, true
-}
-
-func getImg(value map[string]any) string {
-	if url, ok := value["content_url"].(string); ok {
-		return url
-	}
-	return ""
 }

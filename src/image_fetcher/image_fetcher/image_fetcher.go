@@ -48,7 +48,7 @@ func NewImageFetcher(cfg *config.Config) (*ImageFetcher, error) {
 		return nil, err
 	}
 
-	resultQueue, err := common.NewPacketQueue[inner.QueryResult](common.QueueQueryResult, connSettings)
+	resultQueue, err := common.NewPacketQueue[inner.QueryResult](common.QueueQueryResult, connSettings, common.ResultsBatchSize)
 	if err != nil {
 		imageCandidatesEx.Close()
 		return nil, err
@@ -129,7 +129,7 @@ func (f *ImageFetcher) handleImageCandidatesMessage(msg middleware.Message, ack 
 	if packet.IsEof {
 		err = f.synchronizer.EndOfData(packet.ClientID, packet.Total)
 	} else {
-		err = f.handleCandidate(packet.ClientID, packet.Payload)
+		err = f.handleCandidates(packet.ClientID, packet.Items)
 	}
 	if err != nil {
 		slog.Error("While handling image candidate", "client", packet.ClientID, "isEOF", packet.IsEof, "err", err)
@@ -139,9 +139,15 @@ func (f *ImageFetcher) handleImageCandidatesMessage(msg middleware.Message, ack 
 	ack()
 }
 
-func (f *ImageFetcher) handleCandidate(clientID clientid.ID, metadata inner.ImageCandidateMetadata) (err error) {
-	defer func() { err = errors.Join(err, f.synchronizer.Processed(clientID)) }()
+func (f *ImageFetcher) handleCandidates(clientID clientid.ID, batch []inner.ImageCandidateMetadata) (err error) {
+	defer func() { err = errors.Join(err, f.synchronizer.Processed(clientID, uint32(len(batch)))) }()
+	for _, candidate := range batch {
+		err = errors.Join(err, f.handleCandidate(clientID, candidate))
+	}
+	return err
+}
 
+func (f *ImageFetcher) handleCandidate(clientID clientid.ID, metadata inner.ImageCandidateMetadata) (err error) {
 	if metadata.ImageUrl == "" {
 		return nil
 	}
@@ -159,14 +165,11 @@ func (f *ImageFetcher) handleCandidate(clientID clientid.ID, metadata inner.Imag
 }
 
 func (f *ImageFetcher) sendResult(clientID clientid.ID, metadata inner.ImageCandidateMetadata, image []byte) error {
-	if err := f.resultQueue.Send(external.Packet[inner.QueryResult]{
-		ClientID: clientID,
-		Payload: inner.QueryResult{
-			QueryType: inner.QueryImage,
-			Name:      metadata.Name,
-			Url:       metadata.Url,
-			Image:     image,
-		},
+	if err := f.resultQueue.SendData(clientID, inner.QueryResult{
+		QueryType: inner.QueryImage,
+		Name:      metadata.Name,
+		Url:       metadata.Url,
+		Image:     image,
 	}); err != nil {
 		return err
 	}
@@ -175,6 +178,9 @@ func (f *ImageFetcher) sendResult(clientID clientid.ID, metadata inner.ImageCand
 }
 
 func (f *ImageFetcher) onSynced(clientID clientid.ID) {
+	if err := f.resultQueue.Flush(clientID); err != nil {
+		slog.Error("While flushing results", "client", clientID, "err", err)
+	}
 	if err := f.synchronizer.Finished(clientID); err != nil {
 		slog.Error("While sending finished", "client", clientID, "err", err)
 	}

@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/Na4chO/tp-escalabilidad/client/client"
+	"github.com/Na4chO/tp-escalabilidad/common"
 )
 
 func loadConfig() (client.ClientConfig, error) {
@@ -29,11 +30,17 @@ func loadConfig() (client.ClientConfig, error) {
 		return client.ClientConfig{}, errors.New("OUTPUT_PATH environment variable is required")
 	}
 
+	batchSize, err := common.LoadBatchSize()
+	if err != nil {
+		return client.ClientConfig{}, err
+	}
+
 	return client.ClientConfig{
 		ServerHost: serverHost,
 		ServerPort: serverPort,
 		InputPath:  inputPath,
 		OutputPath: outputPath,
+		BatchSize:  batchSize,
 	}, nil
 }
 

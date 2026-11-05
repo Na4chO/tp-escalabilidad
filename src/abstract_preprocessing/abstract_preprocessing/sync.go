@@ -40,11 +40,11 @@ func (t syncTarget) String() string {
 	}
 }
 
-func (p *AbstractPreprocessing) markProcessed(clientID clientid.ID) error {
+func (p *AbstractPreprocessing) markProcessed(clientID clientid.ID, count uint32) error {
 	return errors.Join(
-		p.wordsSync.Processed(clientID),
-		p.from2021Sync.Processed(clientID),
-		p.until2020Sync.Processed(clientID),
+		p.wordsSync.Processed(clientID, count),
+		p.from2021Sync.Processed(clientID, count),
+		p.until2020Sync.Processed(clientID, count),
 	)
 }
 
@@ -58,6 +58,9 @@ func (p *AbstractPreprocessing) onSynced(clientID clientid.ID, target syncTarget
 		return
 	}
 
+	if err := p.flush(clientID, target); err != nil {
+		slog.Error("While flushing", "client", clientID, "output", target, "err", err)
+	}
 	if err := syncer.Finished(clientID); err != nil {
 		slog.Error("While sending finished", "client", clientID, "output", target, "err", err)
 	}
@@ -85,11 +88,20 @@ func (p *AbstractPreprocessing) sendEOF(clientID clientid.ID, target syncTarget,
 			Total:    total,
 		})
 	case syncUntil2020:
-		return p.sendUntil2020(external.Packet[inner.AbstractWordCount]{
-			ClientID: clientID,
-			IsEof:    true,
-			Total:    total,
-		})
+		return p.sendUntil2020EOF(clientID, total)
+	default:
+		return fmt.Errorf("unknown sync target: %s", target)
+	}
+}
+
+func (p *AbstractPreprocessing) flush(clientID clientid.ID, target syncTarget) error {
+	switch target {
+	case syncWords:
+		return p.words.Flush(clientID)
+	case syncFrom2021:
+		return p.from2021.Flush(clientID)
+	case syncUntil2020:
+		return p.until2020Counts.Flush(clientID)
 	default:
 		return fmt.Errorf("unknown sync target: %s", target)
 	}
