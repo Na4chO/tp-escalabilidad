@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-# Runs the system with the parquet files in data/ and compares the client results with the
-# ones computed by scripts/expected/expected.py over the same files.
-# Usage: scripts/run_test.sh
+# Runs the system with the parquet files in data/, split among the clients of docker-compose.yaml by
+# scripts/split_data.sh, and compares the results of each client with the ones computed by
+# scripts/expected/expected.py over its files.
+# Usage: scripts/run_test.sh   (the amount of clients comes from `make compose CLIENTS=N`)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-EXPECTED_DIR="output/expected"
 EXPECTED_IMAGE="tp-expected"
-OUTPUT_DIR="output/client_0"
-CLIENT="client_0"
+CLIENTS=($(docker compose config --services | grep '^client_' | sort -t_ -k2 -n))
 
 if ! ls data/*.parquet >/dev/null 2>&1; then
   echo "No .parquet files in data/, run scripts/download_data.sh first"
@@ -24,36 +23,73 @@ cleanup() {
 }
 trap cleanup EXIT
 
-rm -rf "$OUTPUT_DIR" "$EXPECTED_DIR"
-mkdir -p "$OUTPUT_DIR" "$EXPECTED_DIR"
+scripts/split_data.sh "${#CLIENTS[@]}"
+
+rm -rf output/client_* output/expected
+mkdir -p output/expected
+for client in "${CLIENTS[@]}"; do
+  mkdir -p "output/$client"
+done
+
+echo "Building images"
+docker compose build --quiet
+docker build --quiet --tag "$EXPECTED_IMAGE" scripts/expected >/dev/null
 
 echo "Starting system"
-docker compose up --build --detach --remove-orphans
+start="$(date +%s)"
+docker compose up --detach --remove-orphans
 
-echo "Waiting for $CLIENT to finish"
-elapsed=0
-while [ "$(docker inspect -f '{{.State.Running}}' "$CLIENT")" = "true" ]; do
-  sleep 2
-  elapsed=$((elapsed + 2))
+running() {
+  for client in "${CLIENTS[@]}"; do
+    [ "$(docker inspect -f '{{.State.Running}}' "$client")" = "true" ] && return 0
+  done
+  return 1
+}
+
+total_files="$(ls data/*.parquet | wc -l | tr -d ' ')"
+echo "Waiting for ${#CLIENTS[@]} clients to finish ($total_files files to send)"
+last_progress=""
+while running; do
+  sleep 10
+  sent=0 done_clients=0
+  for client in "${CLIENTS[@]}"; do
+    logs="$(docker logs --since "$start" "$client" 2>&1 || true)"
+    sent=$(( sent + $(grep -c "Reading file" <<< "$logs" || true) ))
+    done_clients=$(( done_clients + $(grep -c "Results received" <<< "$logs" || true) ))
+  done
+  progress="sending file $sent of $total_files, $done_clients of ${#CLIENTS[@]} clients got every result"
+  if [ "$progress" != "$last_progress" ]; then
+    echo "  [$(( ($(date +%s) - start) / 60 ))m $(( ($(date +%s) - start) % 60 ))s] $progress"
+    last_progress="$progress"
+  fi
+done
+elapsed=$(( $(date +%s) - start ))
+
+for client in "${CLIENTS[@]}"; do
+  exit_code="$(docker inspect -f '{{.State.ExitCode}}' "$client")"
+  if [ "$exit_code" != "0" ]; then
+    echo "$client exited with code $exit_code"
+    docker compose logs --tail 20 "$client"
+    exit 1
+  fi
+done
+echo "System finished in $((elapsed / 60))m $((elapsed % 60))s (from startup until every client got its results)"
+
+echo "Computing expected results of each client in parallel"
+pids=()
+for client in "${CLIENTS[@]}"; do
+  docker run --rm -v "$PWD/data:/data" -v "$PWD/output:/output" -e IMAGE_CACHE=/data/image_status.json \
+    "$EXPECTED_IMAGE" generate "/data/$client" "/output/expected/$client" > "output/expected/$client.log" 2>&1 &
+  pids+=($!)
+done
+for pid in "${pids[@]}"; do
+  wait "$pid"
 done
 
-exit_code="$(docker inspect -f '{{.State.ExitCode}}' "$CLIENT")"
-if [ "$exit_code" != "0" ]; then
-  echo "$CLIENT exited with code $exit_code"
-  docker compose logs --tail 20 "$CLIENT"
-  exit 1
-fi
-echo "$CLIENT finished in ~${elapsed}s"
-
-for file in "$OUTPUT_DIR"/query*.csv; do
-  echo "  $(basename "$file"): $(wc -l < "$file" | tr -d ' ') rows"
+failed=0
+for client in "${CLIENTS[@]}"; do
+  echo "Comparing $client ($(ls "data/$client" | wc -l | tr -d ' ') files)"
+  docker run --rm -v "$PWD/output:/output:ro" "$EXPECTED_IMAGE" \
+    compare "/output/expected/$client" "/output/$client" 1 2 3 4 5 || failed=1
 done
-
-echo "Computing expected results"
-docker build --quiet --tag "$EXPECTED_IMAGE" scripts/expected >/dev/null
-docker run --rm -v "$PWD/data:/data:ro" -v "$PWD/output:/output" "$EXPECTED_IMAGE" \
-  generate /data "/$EXPECTED_DIR"
-
-echo "Comparing results"
-docker run --rm -v "$PWD/output:/output:ro" "$EXPECTED_IMAGE" \
-  compare "/$EXPECTED_DIR" "/$OUTPUT_DIR" 1 2 3 4 5
+exit "$failed"

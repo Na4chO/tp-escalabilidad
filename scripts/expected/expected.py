@@ -34,8 +34,8 @@ COLUMNS = ["url", "name", "abstract", "date_modified", "in_language", "image", "
 
 def words(abstract):
     """Unique lowercase words of an abstract, without stopwords nor numbers."""
-    # Python lowercases "İ" as "i" + combining dot, Go as a plain "i"
-    text = (abstract or "").lower().replace("i̇", "i")
+    # Go lowercases rune by rune: a final "Σ" becomes "σ" (Python uses "ς") and "İ" a plain "i" (Python adds a dot)
+    text = (abstract or "").replace("Σ", "σ").lower().replace("i̇", "i")
     unique = dict.fromkeys(w for w in WORD.findall(text) if w not in STOPWORDS and not NUMBER.match(w))
     return list(unique)
 
@@ -48,21 +48,35 @@ def has_biography(sections):
     return any((s.get("name") or "").strip().lower() in ("biography", "biographie") for s in parsed)
 
 
-def image_exists(url, attempts=4):
-    """The dataset has image urls that no longer exist (e.g. renamed files), the system skips those articles."""
+def image_exists(url, cache, attempts=6):
+    """The dataset has image urls that no longer exist (e.g. renamed files), the system skips those articles.
+    Definitive answers are cached in data/, so later runs don't hit Wikimedia again."""
+    if url in cache:
+        return cache[url]
     request = urllib.request.Request(url, method="HEAD", headers={"User-Agent": USER_AGENT})
     for attempt in range(attempts):
         try:
             with urllib.request.urlopen(request, timeout=30):
+                cache[url] = True
                 return True
         except urllib.error.HTTPError as error:
-            if error.code != 429 or attempt == attempts - 1:
+            if error.code != 429:
+                cache[url] = False
                 return False
+            wait = int(error.headers.get("Retry-After") or 2**attempt)
         except urllib.error.URLError:
-            if attempt == attempts - 1:
-                return False
-        time.sleep(2**attempt)
-    return False
+            wait = 2**attempt
+        time.sleep(min(wait, 60))
+    print(f"  query2: could not check {url}, assuming it exists")
+    return True
+
+
+def load_image_cache(path):
+    try:
+        with open(path) as file:
+            return json.load(file)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
 
 
 def generate(data_dir, output_dir):
@@ -94,7 +108,18 @@ def generate(data_dir, output_dir):
             else:
                 new.append([row["url"], len(abstract_words)])
 
-    missing_images = [row for row in q2 if not image_exists(row[2])]
+    # Shared by every client, so it lives outside the data_dir of each one when IMAGE_CACHE says so
+    cache_path = os.environ.get("IMAGE_CACHE", os.path.join(data_dir, "image_status.json"))
+    cache = load_image_cache(cache_path)
+    missing_images = [row for row in q2 if not image_exists(row[2], cache)]
+    try:
+        # Written to a temp file and renamed, so parallel runs never read a half written cache
+        temp_path = f"{cache_path}.{os.getpid()}"
+        with open(temp_path, "w") as file:
+            json.dump(cache, file)
+        os.replace(temp_path, cache_path)
+    except OSError:
+        pass  # data/ is mounted read only when it can't be written
     for name, url, image in missing_images:
         print(f"  query2: skipping {url}, image not found: {image}")
     q2 = [[name, url] for name, url, image in q2 if [name, url, image] not in missing_images]

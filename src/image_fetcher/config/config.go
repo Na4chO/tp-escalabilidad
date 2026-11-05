@@ -12,6 +12,8 @@ type Config struct {
 	UserAgent      string
 	ImageCacheSize int
 	Partition      int
+	// Bandwidth limit of this instance for the Wikimedia downloads
+	DownloadRateMbps float64
 }
 
 func NewConfig() (*Config, error) {
@@ -40,11 +42,17 @@ func NewConfig() (*Config, error) {
 		return nil, errors.New("PARTITION environment variable is required and must be a number")
 	}
 
+	downloadRateMbps, err := strconv.ParseFloat(os.Getenv("DOWNLOAD_RATE_MBPS"), 64)
+	if err != nil || downloadRateMbps <= 0 {
+		return nil, errors.New("DOWNLOAD_RATE_MBPS environment variable is required and must be a positive number")
+	}
+
 	return &Config{
-		MomHost:        momHost,
-		MomPort:        momPort,
-		UserAgent:      userAgent,
-		ImageCacheSize: imageCacheSize,
-		Partition:      partition,
+		MomHost:          momHost,
+		MomPort:          momPort,
+		UserAgent:        userAgent,
+		ImageCacheSize:   imageCacheSize,
+		Partition:        partition,
+		DownloadRateMbps: downloadRateMbps,
 	}, nil
 }

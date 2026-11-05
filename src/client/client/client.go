@@ -61,6 +61,7 @@ func connectToServer(host, port string) (net.Conn, error) {
 func (client *Client) Run() error {
 	defer client.conn.Close()
 	go client.handleSignals()
+	start := time.Now()
 
 	results := make(chan error, 1)
 	go func() { results <- receiveResults(client.conn, client.config.OutputPath) }()
@@ -80,7 +81,7 @@ func (client *Client) Run() error {
 		}
 		return fmt.Errorf("receiving results: %w", err)
 	}
-	slog.Info("Results received", "output", client.config.OutputPath)
+	slog.Info("Results received", "output", client.config.OutputPath, "elapsed", time.Since(start).Round(time.Millisecond))
 	return nil
 }
 

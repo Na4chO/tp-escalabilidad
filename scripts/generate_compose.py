@@ -1,14 +1,17 @@
 """Generates docker-compose.yaml with the given amount of instances of each scalable node.
 
   python3 scripts/generate_compose.py [--metadata-filter N] [--abstract-preprocessing N]
-      [--frequency-collector N] [--top-aggregator N] [--average-calculator N] [--word-counter N] [--output FILE]
+      [--frequency-collector N] [--top-aggregator N] [--average-calculator N] [--word-counter N]
+      [--clients N] [--output FILE]
 
-The server, rabbitmq, the client and the 2 image fetchers are fixed.
+The server, rabbitmq and the 2 image fetchers are fixed.
 """
 
 import argparse
 
 IMAGE_FETCHERS = 2
+# Bandwidth limit of each image fetcher for the Wikimedia downloads
+DOWNLOAD_RATE_MBPS = 25
 TOP_SIZE = 20
 MOM = ["MOM_HOST=rabbitmq", "MOM_PORT=5672"]
 USER_AGENT = "SistemasDistribuidos-Grupo29/1.0 (https://github.com/Na4chO/tp-escalabilidad)"
@@ -33,6 +36,16 @@ def replicas(node, amount, environment):
     return [service(f"{node}_{i}", node, environment(i)) for i in range(amount)]
 
 
+def clients(amount):
+    """Each client sends the files of data/client_<i> (see scripts/split_data.sh) and writes to output/client_<i>."""
+    return [service(f"client_{i}", "client",
+                    ["SERVER_HOST=server", "SERVER_PORT=5678", "INPUT_PATH=/data", "OUTPUT_PATH=/output"],
+                    depends_on_rabbit=False,
+                    extra="\n    depends_on:\n      - server"
+                          f"\n    volumes:\n      - ./data/client_{i}:/data:ro\n      - ./output/client_{i}:/output")
+            for i in range(amount)]
+
+
 def generate(args):
     services = [
         service("server", "server",
@@ -41,7 +54,8 @@ def generate(args):
         *replicas("metadata_filter", args.metadata_filter,
                   lambda i: [*MOM, f"INSTANCE_ID={i}", f"IMAGE_FETCHER_COUNT={IMAGE_FETCHERS}"]),
         *replicas("image_fetcher", IMAGE_FETCHERS,
-                  lambda i: [*MOM, f"WIKIMEDIA_USER_AGENT={USER_AGENT}", "IMAGE_CACHE_SIZE=100", f"PARTITION={i}"]),
+                  lambda i: [*MOM, f"WIKIMEDIA_USER_AGENT={USER_AGENT}", "IMAGE_CACHE_SIZE=100", f"PARTITION={i}",
+                             f"DOWNLOAD_RATE_MBPS={DOWNLOAD_RATE_MBPS}"]),
         *replicas("abstract_preprocessing", args.abstract_preprocessing,
                   lambda i: [*MOM, f"INSTANCE_ID={i}", f"FREQUENCY_COLLECTOR_AMOUNT={args.frequency_collector}",
                              f"AVERAGE_CALCULATOR_AMOUNT={args.average_calculator}"]),
@@ -52,11 +66,7 @@ def generate(args):
         *replicas("average_calculator", args.average_calculator,
                   lambda i: [*MOM, f"ID={i}"]),
         *replicas("abstract_word_counter", args.word_counter, lambda i: [*MOM, f"INSTANCE_ID={i}"]),
-        service("client_0", "client",
-                ["SERVER_HOST=server", "SERVER_PORT=5678", "INPUT_PATH=/data", "OUTPUT_PATH=/output"],
-                depends_on_rabbit=False,
-                extra="\n    depends_on:\n      - server"
-                      "\n    volumes:\n      - ./data:/data:ro\n      - ./output/client_0:/output"),
+        *clients(args.clients),
         RABBITMQ,
     ]
     return "services:\n" + "\n".join(services)
@@ -90,7 +100,7 @@ def positive(value):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generates docker-compose.yaml")
-    for node in ["metadata-filter", "abstract-preprocessing", "frequency-collector", "top-aggregator",
+    for node in ["clients", "metadata-filter", "abstract-preprocessing", "frequency-collector", "top-aggregator",
                  "average-calculator", "word-counter"]:
         parser.add_argument(f"--{node}", type=positive, default=1, help="instances (default 1)")
     parser.add_argument("--output", default="docker-compose.yaml")
@@ -98,6 +108,6 @@ if __name__ == "__main__":
 
     with open(args.output, "w") as file:
         file.write(generate(args))
-    print(f"{args.output}: metadata_filter={args.metadata_filter} abstract_preprocessing={args.abstract_preprocessing} "
+    print(f"{args.output}: clients={args.clients} metadata_filter={args.metadata_filter} abstract_preprocessing={args.abstract_preprocessing} "
           f"frequency_collector={args.frequency_collector} top_aggregator={args.top_aggregator} average_calculator={args.average_calculator} "
           f"abstract_word_counter={args.word_counter} image_fetcher={IMAGE_FETCHERS}")

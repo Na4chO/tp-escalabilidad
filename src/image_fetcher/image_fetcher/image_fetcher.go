@@ -24,9 +24,9 @@ import (
 
 const (
 	syncExchange      = "image_fetcher_sync"
-	fetchAttempts     = 4
+	fetchAttempts     = 5
 	fetchRetryBackoff = time.Second
-	maxRetryWait      = 10 * time.Second
+	maxRetryWait      = time.Minute
 )
 
 type ImageFetcher struct {
@@ -37,6 +37,7 @@ type ImageFetcher struct {
 	running           atomic.Bool
 	userAgent         string
 	httpClient        *http.Client
+	downloadRateMbps  float64
 }
 
 func NewImageFetcher(cfg *config.Config) (*ImageFetcher, error) {
@@ -58,6 +59,7 @@ func NewImageFetcher(cfg *config.Config) (*ImageFetcher, error) {
 		imageCandidatesEx: imageCandidatesEx,
 		imageCache:        NewImageCache(cfg.ImageCacheSize),
 		userAgent:         cfg.UserAgent,
+		downloadRateMbps:  cfg.DownloadRateMbps,
 		httpClient:        &http.Client{Timeout: 30 * time.Second},
 	}
 
@@ -229,7 +231,7 @@ func (f *ImageFetcher) requestImage(url string) ([]byte, time.Duration, error) {
 	if response.StatusCode != http.StatusOK {
 		return nil, -1, fmt.Errorf("unexpected status code from image: %d", response.StatusCode)
 	}
-	imgBytes, err := io.ReadAll(response.Body)
+	imgBytes, err := io.ReadAll(newThrottledReader(response.Body, f.downloadRateMbps))
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to read image body: %w", err)
 	}
