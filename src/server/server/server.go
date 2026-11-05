@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -194,6 +195,8 @@ func (s *Server) handleClientResponse(packet external.Packet[inner.QueryResult],
 	if packet.IsEof {
 		query.eof = true
 		query.total = packet.Total
+		slog.Info(fmt.Sprintf("EOF query %d received (%d/%d)", packet.Payload.QueryType, s.eofsReceived(packet.ClientID), queriesCount),
+			"client", packet.ClientID, "total", packet.Total, "received", query.received)
 	} else {
 		if err := external.WriteQueryResult(client.Conn, packet.Payload); err != nil {
 			slog.Debug("While writing query result", "err", err)
@@ -219,6 +222,16 @@ func (s *Server) queryProgress(clientID clientid.ID, queryType uint8) *queryProg
 		s.progress[clientID][queryType] = &queryProgress{}
 	}
 	return s.progress[clientID][queryType]
+}
+
+func (s *Server) eofsReceived(clientID clientid.ID) int {
+	eofs := 0
+	for _, query := range s.progress[clientID] {
+		if query.eof {
+			eofs++
+		}
+	}
+	return eofs
 }
 
 func (s *Server) allQueriesDone(clientID clientid.ID) bool {

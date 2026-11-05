@@ -49,6 +49,7 @@ running() {
 total_files="$(ls data/*.parquet | wc -l | tr -d ' ')"
 echo "Waiting for ${#CLIENTS[@]} clients to finish ($total_files files to send)"
 last_progress=""
+shown_eofs=0
 while running; do
   sleep 10
   sent=0 done_clients=0
@@ -58,9 +59,16 @@ while running; do
     done_clients=$(( done_clients + $(grep -c "Results received" <<< "$logs" || true) ))
   done
   progress="sending file $sent of $total_files, $done_clients of ${#CLIENTS[@]} clients got every result"
+  timestamp="[$(( ($(date +%s) - start) / 60 ))m $(( ($(date +%s) - start) % 60 ))s]"
   if [ "$progress" != "$last_progress" ]; then
-    echo "  [$(( ($(date +%s) - start) / 60 ))m $(( ($(date +%s) - start) % 60 ))s] $progress"
+    echo "  $timestamp $progress"
     last_progress="$progress"
+  fi
+  # EOFs of each query the server got since the last check, e.g. "EOF query 3 received (2/5) client=1-2"
+  eofs="$(docker logs --since "$start" server 2>&1 | grep "EOF query" || true)"
+  if [ -n "$eofs" ]; then
+    tail -n +$(( shown_eofs + 1 )) <<< "$eofs" | sed -E "s/.*(EOF query .*client=[^ ]*).*/  $timestamp \1/"
+    shown_eofs="$(wc -l <<< "$eofs" | tr -d ' ')"
   fi
 done
 elapsed=$(( $(date +%s) - start ))
