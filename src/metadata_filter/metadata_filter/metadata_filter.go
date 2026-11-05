@@ -97,7 +97,6 @@ func (mf *MetadataFilter) createSynchronizer(instanceID, exchangeName string, ta
 func (mf *MetadataFilter) Run() error {
 	go mf.handleSignals()
 
-	// StartConsuming blocks, so each consumer runs in its own goroutine
 	errs := make(chan error, 3)
 	go func() {
 		errs <- mf.metadataQueue.StartConsuming(func(packet external.Packet[inner.Metadata], ack, nack func()) {
@@ -124,9 +123,9 @@ func (mf *MetadataFilter) Run() error {
 }
 
 func (mf *MetadataFilter) stop() {
-	_ = mf.metadataQueue.StopConsuming()
-	_ = mf.imageSync.StopConsuming()
-	_ = mf.resultsSync.StopConsuming()
+	mf.metadataQueue.StopConsuming()
+	mf.imageSync.StopConsuming()
+	mf.resultsSync.StopConsuming()
 }
 
 func (mf *MetadataFilter) handleSignals() {
@@ -168,8 +167,6 @@ func (mf *MetadataFilter) handleMetadataPacket(packet external.Packet[inner.Meta
 	ack()
 }
 
-// Marked as processed only after its outputs are sent, so the synchronizer never reports
-// a processed count ahead of the sent count
 func (mf *MetadataFilter) handleMetadata(clientID clientid.ID, metadata inner.Metadata) error {
 	if err := mf.filterMetadata(clientID, metadata); err != nil {
 		return err
@@ -188,7 +185,7 @@ func (mf *MetadataFilter) filterMetadata(clientID clientid.ID, metadata inner.Me
 	}
 	if metadata.InLanguage == "en" {
 		result := inner.QueryResult{
-			QueryType:    1,
+			QueryType:    inner.QueryMetadata,
 			Url:          metadata.Url,
 			DateModified: date.Format(time.RFC3339),
 		}

@@ -18,6 +18,8 @@ import (
 	"github.com/Na4chO/tp-escalabilidad/server/config"
 )
 
+const queriesCount = 5
+
 type queryProgress struct {
 	received uint32
 	total    uint32
@@ -26,7 +28,6 @@ type queryProgress struct {
 
 type Server struct {
 	id            string
-	queries       []uint8
 	progress      map[clientid.ID]map[uint8]*queryProgress // only used by the results consumer
 	registry      *clientregistry.ClientRegistry
 	handler       *articleHandler.ArticleHandler
@@ -68,7 +69,6 @@ func NewServer(cfg config.Config) (*Server, error) {
 	handler := articleHandler.NewArticleHandler(metadataQueue, abstractQueue)
 	sv := &Server{
 		id:            cfg.ServerID,
-		queries:       cfg.Queries,
 		progress:      map[clientid.ID]map[uint8]*queryProgress{},
 		registry:      clientregistry.NewClientRegistry(),
 		handler:       handler,
@@ -222,9 +222,11 @@ func (s *Server) queryProgress(clientID clientid.ID, queryType uint8) *queryProg
 }
 
 func (s *Server) allQueriesDone(clientID clientid.ID) bool {
-	for _, queryType := range s.queries {
-		query := s.progress[clientID][queryType]
-		if query == nil || !query.eof || query.received != query.total {
+	if len(s.progress[clientID]) < queriesCount {
+		return false
+	}
+	for _, query := range s.progress[clientID] {
+		if !query.eof || query.received != query.total {
 			return false
 		}
 	}

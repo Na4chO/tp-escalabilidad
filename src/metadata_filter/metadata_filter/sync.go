@@ -64,7 +64,6 @@ func (mf *MetadataFilter) onFinished(clientID clientid.ID, target syncTarget, to
 	var err error
 	switch target {
 	case syncImages:
-		// A single EOF with the candidates sent by every instance, the image fetchers close among themselves
 		err = mf.sendImageCandidate(external.Packet[inner.Metadata]{
 			ClientID: clientID,
 			IsEof:    true,
@@ -75,7 +74,7 @@ func (mf *MetadataFilter) onFinished(clientID clientid.ID, target syncTarget, to
 			ClientID: clientID,
 			IsEof:    true,
 			Total:    total,
-			Payload:  inner.QueryResult{QueryType: 1},
+			Payload:  inner.QueryResult{QueryType: inner.QueryMetadata},
 		})
 	default:
 		err = fmt.Errorf("unknown sync target: %s", target)

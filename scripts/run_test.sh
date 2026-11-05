@@ -4,12 +4,10 @@
 # Usage: scripts/run_test.sh
 # Env:
 #   TIMEOUT  seconds to wait for the client (default 600)
-#   QUERIES  queries to compare (default "1 2 3 4 5")
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-QUERIES="${QUERIES:-1 2 3 4 5}"
 EXPECTED_DIR="output/expected"
 EXPECTED_IMAGE="tp-expected"
 TIMEOUT="${TIMEOUT:-600}"
@@ -66,6 +64,5 @@ for file in "$OUTPUT_DIR"/query*.csv; do
 done
 
 echo "Comparing results"
-# shellcheck disable=SC2086
 docker run --rm -v "$PWD/output:/output:ro" "$EXPECTED_IMAGE" \
-  compare "/$EXPECTED_DIR" "/$OUTPUT_DIR" $QUERIES
+  compare "/$EXPECTED_DIR" "/$OUTPUT_DIR" 1 2 3 4 5

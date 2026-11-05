@@ -8,22 +8,6 @@ import (
 	"github.com/Na4chO/tp-escalabilidad/common/external/serializer"
 )
 
-func WritePacket[T any](writer io.Writer, packet Packet[T]) error {
-	data, err := packet.Encode()
-	if err != nil {
-		return err
-	}
-	return WriteFrame(writer, data)
-}
-
-func ReadPacket[T any](reader io.Reader) (Packet[T], error) {
-	data, err := ReadFrame(reader)
-	if err != nil {
-		return Packet[T]{}, err
-	}
-	return DecodePacket[T](data)
-}
-
 func WriteFrame(writer io.Writer, data []byte) error {
 	frame := serializer.SerializeUint32(uint32(len(data)))
 	frame = append(frame, data...)

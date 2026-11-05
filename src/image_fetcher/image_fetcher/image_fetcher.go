@@ -22,7 +22,12 @@ import (
 	"github.com/Na4chO/tp-escalabilidad/image_fetcher/config"
 )
 
-const syncExchange = "image_fetcher_sync"
+const (
+	syncExchange      = "image_fetcher_sync"
+	fetchAttempts     = 4
+	fetchRetryBackoff = time.Second
+	maxRetryWait      = 10 * time.Second
+)
 
 type ImageFetcher struct {
 	resultQueue       *common.PacketQueue[inner.QueryResult]
@@ -56,7 +61,6 @@ func NewImageFetcher(cfg *config.Config) (*ImageFetcher, error) {
 		httpClient:        &http.Client{Timeout: 30 * time.Second},
 	}
 
-	// The partition is unique per instance, so it works as the synchronizer instance id
 	f.synchronizer, err = synchronizer.NewSynchronizer(strconv.Itoa(cfg.Partition), syncExchange, connSettings, f.onSynced, f.onFinished)
 	if err != nil {
 		imageCandidatesEx.Close()
@@ -91,8 +95,8 @@ func (f *ImageFetcher) Run() error {
 }
 
 func (f *ImageFetcher) stop() {
-	_ = f.imageCandidatesEx.StopConsuming()
-	_ = f.synchronizer.StopConsuming()
+	f.imageCandidatesEx.StopConsuming()
+	f.synchronizer.StopConsuming()
 }
 
 func (f *ImageFetcher) handleSignals() {
@@ -133,22 +137,15 @@ func (f *ImageFetcher) handleImageCandidatesMessage(msg middleware.Message, ack 
 	ack()
 }
 
-// Marked as processed only after the result is sent, so the processed count never runs ahead of the sent one
-func (f *ImageFetcher) handleCandidate(clientID clientid.ID, metadata inner.Metadata) error {
-	if err := f.sendResult(clientID, metadata); err != nil {
-		return err
-	}
-	return f.synchronizer.Processed(clientID)
-}
+func (f *ImageFetcher) handleCandidate(clientID clientid.ID, metadata inner.Metadata) (err error) {
+	defer func() { err = errors.Join(err, f.synchronizer.Processed(clientID)) }()
 
-func (f *ImageFetcher) sendResult(clientID clientid.ID, metadata inner.Metadata) error {
 	if metadata.ImageUrl == "" {
 		return nil
 	}
 
 	image, ok := f.imageCache.Get(metadata.ImageUrl)
 	if !ok {
-		var err error
 		if image, err = f.fetchImage(metadata.ImageUrl); err != nil {
 			slog.Warn("Skipping article, could not fetch image", "url", metadata.Url, "image", metadata.ImageUrl, "err", err)
 			return nil
@@ -156,10 +153,14 @@ func (f *ImageFetcher) sendResult(clientID clientid.ID, metadata inner.Metadata)
 		f.imageCache.Put(metadata.ImageUrl, image)
 	}
 
+	return f.sendResult(clientID, metadata, image)
+}
+
+func (f *ImageFetcher) sendResult(clientID clientid.ID, metadata inner.Metadata, image []byte) error {
 	if err := f.resultQueue.Send(external.Packet[inner.QueryResult]{
 		ClientID: clientID,
 		Payload: inner.QueryResult{
-			QueryType: 2,
+			QueryType: inner.QueryImage,
 			Name:      metadata.Name,
 			Url:       metadata.Url,
 			Image:     image,
@@ -171,20 +172,18 @@ func (f *ImageFetcher) sendResult(clientID clientid.ID, metadata inner.Metadata)
 	return nil
 }
 
-// Every candidate of the client was processed by some instance, and this one already sent its results
 func (f *ImageFetcher) onSynced(clientID clientid.ID) {
 	if err := f.synchronizer.Finished(clientID); err != nil {
 		slog.Error("While sending finished", "client", clientID, "err", err)
 	}
 }
 
-// Only the instance that received the EOF gets here, with the results sent by every instance
 func (f *ImageFetcher) onFinished(clientID clientid.ID, total uint32) {
 	err := f.resultQueue.Send(external.Packet[inner.QueryResult]{
 		ClientID: clientID,
 		IsEof:    true,
 		Total:    total,
-		Payload:  inner.QueryResult{QueryType: 2},
+		Payload:  inner.QueryResult{QueryType: inner.QueryImage},
 	})
 	if err != nil {
 		slog.Error("While sending results EOF", "client", clientID, "err", err)
@@ -193,14 +192,6 @@ func (f *ImageFetcher) onFinished(clientID clientid.ID, total uint32) {
 	slog.Info("Client finished", "client", clientID, "total", total)
 }
 
-const (
-	fetchAttempts     = 4
-	fetchRetryBackoff = time.Second
-	maxRetryWait      = 10 * time.Second
-)
-
-// fetchImage retries when Wikimedia rate limits (429), waiting Retry-After or an exponential backoff.
-// Longer waits are not worth it: the fetcher is blocked meanwhile, so the image is skipped
 func (f *ImageFetcher) fetchImage(url string) ([]byte, error) {
 	backoff := fetchRetryBackoff
 	for attempt := 1; ; attempt++ {
@@ -219,7 +210,6 @@ func (f *ImageFetcher) fetchImage(url string) ([]byte, error) {
 	}
 }
 
-// requestImage returns retryAfter >= 0 only when the request can be retried
 func (f *ImageFetcher) requestImage(url string) ([]byte, time.Duration, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {

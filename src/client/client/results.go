@@ -62,9 +62,9 @@ func receiveResults(conn io.Reader, outputPath string) error {
 
 func rows(result inner.QueryResult) [][]string {
 	switch result.QueryType {
-	case 1:
+	case inner.QueryMetadata:
 		return [][]string{{result.Url, result.DateModified}}
-	case 2:
+	case inner.QueryImage:
 		return [][]string{{result.Name, result.Url, base64.StdEncoding.EncodeToString(result.Image)}}
 	case inner.QueryIntersections:
 		var rows [][]string

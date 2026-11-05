@@ -1,6 +1,8 @@
 package inner
 
 const (
+	QueryMetadata             uint8 = 1
+	QueryImage                uint8 = 2
 	QueryIntersections        uint8 = 3
 	QueryTopWords             uint8 = 4
 	QueryAbstractAboveAverage uint8 = 5
