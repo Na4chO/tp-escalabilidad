@@ -138,7 +138,6 @@ func (s *Server) handleSignals() {
 }
 
 func (s *Server) handleClientRequest(clientID clientid.ID, conn net.Conn) {
-loop:
 	for {
 		msgType, err := external.ReadMsgType(conn)
 		if err != nil {
@@ -174,7 +173,7 @@ loop:
 				conn.Close()
 				return
 			}
-			break loop
+			break
 
 		default:
 			slog.Debug("Read unexpected message type")
