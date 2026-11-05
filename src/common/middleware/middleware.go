@@ -2,7 +2,6 @@ package middleware
 
 import "errors"
 
-// Unacked messages RabbitMQ delivers to each consumer at once. With 1 every message waits a round trip to the broker
 const prefetchCount = 200
 
 var (

@@ -59,7 +59,7 @@ func NewCounter(instanceID string, connSettings middleware.ConnSettings, batchSi
 		return nil, fmt.Errorf("creating averages exchange: %w", err)
 	}
 
-	results, err := common.NewPacketQueue[inner.QueryResult](common.QueueQueryResult, connSettings, common.ResultsBatchSize)
+	results, err := common.NewPacketQueue[inner.QueryResult](common.QueueQueryResult, connSettings, batchSize)
 	if err != nil {
 		input.Close()
 		syncer.Close()
