@@ -2,7 +2,7 @@ services:
   server:
     build:
       context: ./src
-      dockerfile: server/Dockerfile
+      dockerfile: article_processing_system/server/Dockerfile
     container_name: server
     depends_on:
       rabbitmq:
@@ -12,118 +12,365 @@ services:
       - SERVER_PORT=5678
       - MOM_HOST=rabbitmq
       - MOM_PORT=5672
+      - BATCH_SIZE=100
       - SERVER_ID=1
     ports:
       - "5678:5678"
 
-  metadata_filter:
+  metadata_filter_0:
     build:
       context: ./src
-      dockerfile: metadata_filter/Dockerfile
-    container_name: metadata_filter
+      dockerfile: article_processing_system/metadata_filter/Dockerfile
+    container_name: metadata_filter_0
     depends_on:
       rabbitmq:
         condition: service_healthy
     environment:
       - MOM_HOST=rabbitmq
       - MOM_PORT=5672
+      - BATCH_SIZE=100
       - INSTANCE_ID=0
-      - IMAGE_FETCHER_COUNT=1
+      - IMAGE_FETCHER_COUNT=2
 
-  image_fetcher:
+  metadata_filter_1:
     build:
       context: ./src
-      dockerfile: image_fetcher/Dockerfile
-    container_name: image_fetcher
+      dockerfile: article_processing_system/metadata_filter/Dockerfile
+    container_name: metadata_filter_1
     depends_on:
       rabbitmq:
         condition: service_healthy
     environment:
       - MOM_HOST=rabbitmq
       - MOM_PORT=5672
+      - BATCH_SIZE=100
+      - INSTANCE_ID=1
+      - IMAGE_FETCHER_COUNT=2
+
+  metadata_filter_2:
+    build:
+      context: ./src
+      dockerfile: article_processing_system/metadata_filter/Dockerfile
+    container_name: metadata_filter_2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+      - BATCH_SIZE=100
+      - INSTANCE_ID=2
+      - IMAGE_FETCHER_COUNT=2
+
+  image_fetcher_0:
+    build:
+      context: ./src
+      dockerfile: article_processing_system/image_fetcher/Dockerfile
+    container_name: image_fetcher_0
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+      - BATCH_SIZE=100
       - WIKIMEDIA_USER_AGENT=SistemasDistribuidos-Grupo29/1.0 (https://github.com/Na4chO/tp-escalabilidad)
       - IMAGE_CACHE_SIZE=100
       - PARTITION=0
+      - DOWNLOAD_RATE_MBPS=25
 
-  frequency_collector:
+  image_fetcher_1:
     build:
       context: ./src
-      dockerfile: frequency_collector/Dockerfile
+      dockerfile: article_processing_system/image_fetcher/Dockerfile
+    container_name: image_fetcher_1
     depends_on:
       rabbitmq:
         condition: service_healthy
     environment:
-      - TOP_SIZE=20
-      - ID=0
-      - TOP_AGGREGATOR_AMOUNT=1
       - MOM_HOST=rabbitmq
       - MOM_PORT=5672
+      - BATCH_SIZE=100
+      - WIKIMEDIA_USER_AGENT=SistemasDistribuidos-Grupo29/1.0 (https://github.com/Na4chO/tp-escalabilidad)
+      - IMAGE_CACHE_SIZE=100
+      - PARTITION=1
+      - DOWNLOAD_RATE_MBPS=25
 
-  top_aggregator:
+  abstract_preprocessing_0:
     build:
       context: ./src
-      dockerfile: top_aggregator/Dockerfile
+      dockerfile: article_processing_system/abstract_preprocessing/Dockerfile
+    container_name: abstract_preprocessing_0
     depends_on:
       rabbitmq:
         condition: service_healthy
     environment:
-      - TOP_SIZE=20
-      - ID=0
       - MOM_HOST=rabbitmq
       - MOM_PORT=5672
+      - BATCH_SIZE=100
+      - INSTANCE_ID=0
+      - FREQUENCY_COLLECTOR_AMOUNT=3
+      - AVERAGE_CALCULATOR_AMOUNT=3
+
+  abstract_preprocessing_1:
+    build:
+      context: ./src
+      dockerfile: article_processing_system/abstract_preprocessing/Dockerfile
+    container_name: abstract_preprocessing_1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+      - BATCH_SIZE=100
+      - INSTANCE_ID=1
+      - FREQUENCY_COLLECTOR_AMOUNT=3
+      - AVERAGE_CALCULATOR_AMOUNT=3
+
+  abstract_preprocessing_2:
+    build:
+      context: ./src
+      dockerfile: article_processing_system/abstract_preprocessing/Dockerfile
+    container_name: abstract_preprocessing_2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+      - BATCH_SIZE=100
+      - INSTANCE_ID=2
+      - FREQUENCY_COLLECTOR_AMOUNT=3
+      - AVERAGE_CALCULATOR_AMOUNT=3
+
+  frequency_collector_0:
+    build:
+      context: ./src
+      dockerfile: article_processing_system/frequency_collector/Dockerfile
+    container_name: frequency_collector_0
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+      - BATCH_SIZE=100
+      - TOP_SIZE=20
+      - ID=0
+      - TOP_AGGREGATOR_AMOUNT=3
+
+  frequency_collector_1:
+    build:
+      context: ./src
+      dockerfile: article_processing_system/frequency_collector/Dockerfile
+    container_name: frequency_collector_1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+      - BATCH_SIZE=100
+      - TOP_SIZE=20
+      - ID=1
+      - TOP_AGGREGATOR_AMOUNT=3
+
+  frequency_collector_2:
+    build:
+      context: ./src
+      dockerfile: article_processing_system/frequency_collector/Dockerfile
+    container_name: frequency_collector_2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+      - BATCH_SIZE=100
+      - TOP_SIZE=20
+      - ID=2
+      - TOP_AGGREGATOR_AMOUNT=3
+
+  top_aggregator_0:
+    build:
+      context: ./src
+      dockerfile: article_processing_system/top_aggregator/Dockerfile
+    container_name: top_aggregator_0
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+      - BATCH_SIZE=100
+      - TOP_SIZE=20
+      - ID=0
+
+  top_aggregator_1:
+    build:
+      context: ./src
+      dockerfile: article_processing_system/top_aggregator/Dockerfile
+    container_name: top_aggregator_1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+      - BATCH_SIZE=100
+      - TOP_SIZE=20
+      - ID=1
+
+  top_aggregator_2:
+    build:
+      context: ./src
+      dockerfile: article_processing_system/top_aggregator/Dockerfile
+    container_name: top_aggregator_2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+      - BATCH_SIZE=100
+      - TOP_SIZE=20
+      - ID=2
+
+  average_calculator_0:
+    build:
+      context: ./src
+      dockerfile: article_processing_system/average_calculator/Dockerfile
+    container_name: average_calculator_0
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+      - BATCH_SIZE=100
+      - ID=0
+
+  average_calculator_1:
+    build:
+      context: ./src
+      dockerfile: article_processing_system/average_calculator/Dockerfile
+    container_name: average_calculator_1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+      - BATCH_SIZE=100
+      - ID=1
+
+  average_calculator_2:
+    build:
+      context: ./src
+      dockerfile: article_processing_system/average_calculator/Dockerfile
+    container_name: average_calculator_2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+      - BATCH_SIZE=100
+      - ID=2
+
+  abstract_word_counter_0:
+    build:
+      context: ./src
+      dockerfile: article_processing_system/abstract_word_counter/Dockerfile
+    container_name: abstract_word_counter_0
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+      - BATCH_SIZE=100
+      - INSTANCE_ID=0
+
+  abstract_word_counter_1:
+    build:
+      context: ./src
+      dockerfile: article_processing_system/abstract_word_counter/Dockerfile
+    container_name: abstract_word_counter_1
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+      - BATCH_SIZE=100
+      - INSTANCE_ID=1
+
+  abstract_word_counter_2:
+    build:
+      context: ./src
+      dockerfile: article_processing_system/abstract_word_counter/Dockerfile
+    container_name: abstract_word_counter_2
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - MOM_HOST=rabbitmq
+      - MOM_PORT=5672
+      - BATCH_SIZE=100
+      - INSTANCE_ID=2
 
   client_0:
     build:
       context: ./src
       dockerfile: client/Dockerfile
     container_name: client_0
-    depends_on:
-      - server
     environment:
       - SERVER_HOST=server
       - SERVER_PORT=5678
       - INPUT_PATH=/data
       - OUTPUT_PATH=/output
+      - BATCH_SIZE=100
+    depends_on:
+      - server
     volumes:
-      - ./data:/data:ro
+      - ./data/client_0:/data:ro
       - ./output/client_0:/output
 
-  abstract_word_counter:
+  client_1:
     build:
       context: ./src
-      dockerfile: abstract_word_counter/Dockerfile
-    container_name: abstract_word_counter
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
+      dockerfile: client/Dockerfile
+    container_name: client_1
     environment:
-      - MOM_HOST=rabbitmq
-      - MOM_PORT=5672
+      - SERVER_HOST=server
+      - SERVER_PORT=5678
+      - INPUT_PATH=/data
+      - OUTPUT_PATH=/output
+      - BATCH_SIZE=100
+    depends_on:
+      - server
+    volumes:
+      - ./data/client_1:/data:ro
+      - ./output/client_1:/output
 
-  average_calculator:
+  client_2:
     build:
       context: ./src
-      dockerfile: average_calculator/Dockerfile
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
+      dockerfile: client/Dockerfile
+    container_name: client_2
     environment:
-      - ID=0
-      - MOM_HOST=rabbitmq
-      - MOM_PORT=5672
-
-  abstract_preprocessing:
-    build:
-      context: ./src
-      dockerfile: abstract_preprocessing/Dockerfile
+      - SERVER_HOST=server
+      - SERVER_PORT=5678
+      - INPUT_PATH=/data
+      - OUTPUT_PATH=/output
+      - BATCH_SIZE=100
     depends_on:
-      rabbitmq:
-        condition: service_healthy
-    environment:
-      - FREQUENCY_COLLECTOR_AMOUNT=1
-      - AVERAGE_CALCULATOR_AMOUNT=1
-      - MOM_HOST=rabbitmq
-      - MOM_PORT=5672
+      - server
+    volumes:
+      - ./data/client_2:/data:ro
+      - ./output/client_2:/output
 
   rabbitmq:
     build:

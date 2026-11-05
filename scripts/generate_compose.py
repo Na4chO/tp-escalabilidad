@@ -17,12 +17,13 @@ MOM = ["MOM_HOST=rabbitmq", "MOM_PORT=5672"]
 USER_AGENT = "SistemasDistribuidos-Grupo29/1.0 (https://github.com/Na4chO/tp-escalabilidad)"
 
 
-def service(name, node, environment, depends_on_rabbit=True, extra=""):
+def service(name, node, environment, depends_on_rabbit=True, extra="", system=True):
+    folder = f"article_processing_system/{node}" if system else node
     lines = [
         f"  {name}:",
         "    build:",
         "      context: ./src",
-        f"      dockerfile: {node}/Dockerfile",
+        f"      dockerfile: {folder}/Dockerfile",
         f"    container_name: {name}",
     ]
     if depends_on_rabbit:
@@ -42,6 +43,7 @@ def clients(amount, batch_size):
                     ["SERVER_HOST=server", "SERVER_PORT=5678", "INPUT_PATH=/data", "OUTPUT_PATH=/output",
                      f"BATCH_SIZE={batch_size}"],
                     depends_on_rabbit=False,
+                    system=False,
                     extra="\n    depends_on:\n      - server"
                           f"\n    volumes:\n      - ./data/client_{i}:/data:ro\n      - ./output/client_{i}:/output")
             for i in range(amount)]

@@ -1,0 +1,58 @@
+package config
+
+import (
+	"errors"
+	"os"
+	"strconv"
+
+	"github.com/Na4chO/tp-escalabilidad/common"
+)
+
+type Config struct {
+	ServerID   string
+	ServerHost string
+	ServerPort string
+	MomHost    string
+	MomPort    int
+	BatchSize  int
+}
+
+func NewConfig() (*Config, error) {
+	serverID := os.Getenv("SERVER_ID")
+	if serverID == "" {
+		return nil, errors.New("SERVER_ID environment variable is required")
+	}
+	serverHost := os.Getenv("SERVER_HOST")
+	if serverHost == "" {
+		return nil, errors.New("SERVER_HOST environment variable is required")
+	}
+
+	serverPort := os.Getenv("SERVER_PORT")
+	if serverPort == "" {
+		return nil, errors.New("SERVER_PORT environment variable is required")
+	}
+
+	momPort, err := strconv.Atoi(os.Getenv("MOM_PORT"))
+	if err != nil {
+		return nil, errors.New("MOM_PORT environment variable is required and must be a number")
+	}
+
+	momHost := os.Getenv("MOM_HOST")
+	if momHost == "" {
+		return nil, errors.New("MOM_HOST environment variable is required")
+	}
+
+	batchSize, err := common.LoadBatchSize()
+	if err != nil {
+		return nil, err
+	}
+
+	return &Config{
+		ServerID:   serverID,
+		ServerHost: serverHost,
+		ServerPort: serverPort,
+		MomHost:    momHost,
+		MomPort:    momPort,
+		BatchSize:  batchSize,
+	}, nil
+}
