@@ -16,6 +16,11 @@ services:
       - SERVER_ID=1
     ports:
       - "5678:5678"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "5678"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
 
   metadata_filter_0:
     build:
@@ -320,57 +325,6 @@ services:
       - MOM_PORT=5672
       - BATCH_SIZE=100
       - INSTANCE_ID=2
-
-  client_0:
-    build:
-      context: ./src
-      dockerfile: client/Dockerfile
-    container_name: client_0
-    environment:
-      - SERVER_HOST=server
-      - SERVER_PORT=5678
-      - INPUT_PATH=/data
-      - OUTPUT_PATH=/output
-      - BATCH_SIZE=100
-    depends_on:
-      - server
-    volumes:
-      - ./data/client_0:/data:ro
-      - ./output/client_0:/output
-
-  client_1:
-    build:
-      context: ./src
-      dockerfile: client/Dockerfile
-    container_name: client_1
-    environment:
-      - SERVER_HOST=server
-      - SERVER_PORT=5678
-      - INPUT_PATH=/data
-      - OUTPUT_PATH=/output
-      - BATCH_SIZE=100
-    depends_on:
-      - server
-    volumes:
-      - ./data/client_1:/data:ro
-      - ./output/client_1:/output
-
-  client_2:
-    build:
-      context: ./src
-      dockerfile: client/Dockerfile
-    container_name: client_2
-    environment:
-      - SERVER_HOST=server
-      - SERVER_PORT=5678
-      - INPUT_PATH=/data
-      - OUTPUT_PATH=/output
-      - BATCH_SIZE=100
-    depends_on:
-      - server
-    volumes:
-      - ./data/client_2:/data:ro
-      - ./output/client_2:/output
 
   rabbitmq:
     build:

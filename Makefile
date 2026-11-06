@@ -18,7 +18,7 @@ check:
 .PHONY: check
 
 BATCH_SIZE ?= 100
-CLIENTS ?= 3
+N ?= 3
 METADATA_FILTER ?= 3
 ABSTRACT_PREPROCESSING ?= 3
 FREQUENCY_COLLECTOR ?= 3
@@ -27,24 +27,59 @@ AVERAGE_CALCULATOR ?= 3
 WORD_COUNTER ?= 3
 
 compose:
-	python3 scripts/generate_compose.py --batch-size $(BATCH_SIZE) --clients $(CLIENTS) --metadata-filter $(METADATA_FILTER) \
+	python3 scripts/generate_compose.py --batch-size $(BATCH_SIZE) --metadata-filter $(METADATA_FILTER) \
 		--abstract-preprocessing $(ABSTRACT_PREPROCESSING) --frequency-collector $(FREQUENCY_COLLECTOR) \
 		--top-aggregator $(TOP_AGGREGATOR) \
 		--average-calculator $(AVERAGE_CALCULATOR) --word-counter $(WORD_COUNTER)
-	scripts/split_data.sh $(CLIENTS)
 .PHONY: compose
 
 up:
 	mkdir -p output
-	COMPOSE_HTTP_TIMEOUT=300 docker compose -f docker-compose.yaml up --build --remove-orphans --detach
-	docker compose -f docker-compose.yaml logs --follow
+	COMPOSE_HTTP_TIMEOUT=300 docker compose up --build --remove-orphans --detach --wait
+	docker compose logs --follow
 .PHONY: up
 
+system:
+	mkdir -p output
+	COMPOSE_HTTP_TIMEOUT=300 docker compose up --build --remove-orphans --detach --wait
+.PHONY: system
+
+expected:
+	docker build --quiet --tag tp-expected scripts/expected
+	docker run --rm --entrypoint rm -v "$(CURDIR)/output:/output" tp-expected -rf /output/expected
+	mkdir -p output/expected
+	docker run --rm -v "$(CURDIR)/data:/data" -v "$(CURDIR)/output:/output" \
+		-e IMAGE_CACHE=/data/image_status.json \
+		tp-expected generate /data /output/expected
+	find data -maxdepth 1 -name '*.parquet' -printf '%f\n' | sort > output/expected/files.txt
+.PHONY: expected
+
+clients:
+	scripts/run_clients.sh $(N)
+.PHONY: clients
+
+test: expected
+	mkdir -p output
+	rm -rf output/client_run_*
+	@set +e; \
+	COMPOSE_HTTP_TIMEOUT=300 docker compose up --build --remove-orphans --detach --wait; system=$$?; \
+	if [ $$system -ne 0 ]; then \
+		docker compose stop -t 5; \
+		docker compose down; \
+		exit 1; \
+	fi; \
+	WAIT=1 scripts/run_clients.sh $(N); clients=$$?; \
+	go run ./scripts/verify_output.go -clients $(N); verify=$$?; \
+	docker compose stop -t 5; \
+	docker compose down; \
+	[ $$clients -eq 0 ] && [ $$verify -eq 0 ]
+.PHONY: test
+
 down:
-	docker compose -f docker-compose.yaml stop -t 5
-	docker compose -f docker-compose.yaml down
+	docker compose stop -t 5
+	docker compose down
 .PHONY: down
 
 logs:
-	docker compose -f docker-compose.yaml logs
+	docker compose logs
 .PHONY: logs

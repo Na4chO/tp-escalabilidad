@@ -1,0 +1,11 @@
+services:
+  client_run:
+    build:
+      context: ./src
+      dockerfile: client/Dockerfile
+    environment:
+      - SERVER_HOST=server
+      - SERVER_PORT=5678
+      - INPUT_PATH=/data
+      - OUTPUT_PATH=/output
+      - BATCH_SIZE=100
