@@ -82,7 +82,9 @@ test:
 		docker compose down; \
 		exit 1; \
 	fi; \
+	docker compose logs --follow server & server_logs=$$!; \
 	WAIT=1 scripts/run_clients.sh $(N); clients=$$?; \
+	kill $$server_logs; \
 	$(VERIFY_CMD); verify=$$?; \
 	docker compose stop -t 5; \
 	docker compose down; \
