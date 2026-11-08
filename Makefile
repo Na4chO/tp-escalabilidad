@@ -49,7 +49,6 @@ system:
 
 VERIFY_CMD = docker build --quiet --tag tp-verify scripts/verify && \
 	docker run --rm -v "$(CURDIR)/data:/data:ro" -v "$(CURDIR)/output:/output" \
-		-e IMAGE_CACHE=/output/image_status.json \
 		tp-verify -clients $(N)
 
 verify:

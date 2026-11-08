@@ -1,12 +1,9 @@
 package verify
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 )
@@ -15,36 +12,6 @@ import (
 const userAgent = "SistemasDistribuidos-Grupo29/1.0 (https://github.com/Na4chO/tp-escalabilidad)"
 
 var httpClient = &http.Client{Timeout: 30 * time.Second}
-
-// The cache is shared by every client, IMAGE_CACHE puts it outside the data dir of each one
-func imageCachePath(dataDir string) string {
-	if path := os.Getenv("IMAGE_CACHE"); path != "" {
-		return path
-	}
-	return filepath.Join(dataDir, "image_status.json")
-}
-
-func loadImageCache(path string) map[string]bool {
-	cache := map[string]bool{}
-	data, err := os.ReadFile(path)
-	if err == nil {
-		_ = json.Unmarshal(data, &cache)
-	}
-	return cache
-}
-
-// saveImageCache writes a temp file and renames it, so a reader never sees it half written
-func saveImageCache(path string, cache map[string]bool) error {
-	data, err := json.Marshal(cache)
-	if err != nil {
-		return err
-	}
-	temp := fmt.Sprintf("%s.%d", path, os.Getpid())
-	if err := os.WriteFile(temp, data, 0o644); err != nil {
-		return nil // data/ may be read only, the cache is just an optimization
-	}
-	return os.Rename(temp, path)
-}
 
 // imageExists tells whether the url still serves an image. The dataset has urls that no longer
 // exist (renamed or deleted files) and the system skips those articles. Only definitive answers are cached

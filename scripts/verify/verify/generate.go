@@ -89,10 +89,7 @@ func Generate(dataDir, outputDir string) error {
 		}
 	}
 
-	q2, err := r.existingImages(imageCachePath(dataDir))
-	if err != nil {
-		return err
-	}
+	q2 := r.existingImages()
 
 	average := 0.0
 	if r.oldCount > 0 {
@@ -206,8 +203,8 @@ func hasBiography(rawSections string) bool {
 	return false
 }
 
-func (r *results) existingImages(cachePath string) ([][]string, error) {
-	cache := loadImageCache(cachePath)
+func (r *results) existingImages() [][]string {
+	cache := map[string]bool{}
 	var rows [][]string
 	for _, c := range r.q2 {
 		if !imageExists(c.image, cache) {
@@ -216,7 +213,7 @@ func (r *results) existingImages(cachePath string) ([][]string, error) {
 		}
 		rows = append(rows, []string{c.name, c.url})
 	}
-	return rows, saveImageCache(cachePath, cache)
+	return rows
 }
 
 func (r *results) intersections() [][]string {
