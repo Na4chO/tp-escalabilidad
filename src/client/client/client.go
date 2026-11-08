@@ -38,26 +38,30 @@ func NewClient(config ClientConfig) (*Client, error) {
 		return nil, err
 	}
 
+	slog.Info("Connected to server", "server", net.JoinHostPort(config.ServerHost, config.ServerPort))
+
 	client := &Client{conn: conn, config: config}
 	client.running.Store(true)
 	return client, nil
 }
 
 func connectToServer(host, port string) (net.Conn, error) {
+	addr := net.JoinHostPort(host, port)
 	var err error
-	var conn net.Conn
 
-	for range connectionAttempts {
-		conn, err = net.Dial("tcp", host+":"+port)
-		if err != nil {
-			slog.Warn("Retrying connection...")
-			time.Sleep(connectionAttemptsDelayMs * time.Millisecond)
-			continue
+	for attempt := 1; attempt <= connectionAttempts; attempt++ {
+		conn, dialErr := net.Dial("tcp", addr)
+		if dialErr == nil {
+			return conn, nil
 		}
-		break
+		err = dialErr
+		slog.Warn("Connection attempt failed", "attempt", attempt, "server", addr, "err", dialErr)
+		if attempt < connectionAttempts {
+			time.Sleep(connectionAttemptsDelayMs * time.Millisecond)
+		}
 	}
 
-	return conn, err
+	return nil, err
 }
 
 func (client *Client) Run() error {
@@ -65,9 +69,15 @@ func (client *Client) Run() error {
 	go client.handleSignals()
 	start := time.Now()
 
+	slog.Info("Client started",
+		"input", client.config.InputPath,
+		"output", client.config.OutputPath,
+		"batch_size", client.config.BatchSize)
+
 	results := make(chan error, 1)
 	go func() { results <- receiveResults(client.conn, client.config.OutputPath) }()
 
+	slog.Info("Sending articles")
 	if err := client.sendArticles(); err != nil {
 		if !client.running.Load() {
 			slog.Info("Client stopped before sending all articles")
@@ -76,6 +86,7 @@ func (client *Client) Run() error {
 		return fmt.Errorf("sending articles: %w", err)
 	}
 
+	slog.Info("Waiting for results")
 	if err := <-results; err != nil {
 		if !client.running.Load() {
 			slog.Info("Client stopped before receiving all results")
@@ -96,7 +107,6 @@ func (client *Client) sendArticles() error {
 		return fmt.Errorf("no .parquet files in %s", client.config.InputPath)
 	}
 
-	var totalArticles, totalBytes int
 	start := time.Now()
 
 	for _, path := range files {
@@ -115,8 +125,6 @@ func (client *Client) sendArticles() error {
 
 	slog.Info("Dataset sent",
 		"files", len(files),
-		"articles", totalArticles,
-		"serialized_bytes", totalBytes,
 		"elapsed", time.Since(start).Round(time.Millisecond))
 	return nil
 }
@@ -141,8 +149,8 @@ func (client *Client) flushArticles() error {
 func (client *Client) handleSignals() {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
-	<-signals
-	slog.Info("SIGTERM signal received")
+	sig := <-signals
+	slog.Info("Shutting down", "signal", sig.String())
 	client.running.Store(false)
 	client.conn.Close()
 }

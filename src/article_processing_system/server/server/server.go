@@ -79,6 +79,12 @@ func NewServer(cfg config.Config) (*Server, error) {
 		listener:      listener,
 	}
 	sv.running.Store(true)
+	slog.Info("Server initialized",
+		"id", cfg.ServerID,
+		"listen", listener.Addr().String(),
+		"mom_host", cfg.MomHost,
+		"mom_port", cfg.MomPort,
+		"batch_size", cfg.BatchSize)
 	return sv, nil
 }
 
@@ -95,7 +101,7 @@ func (s *Server) Run() error {
 	}()
 	go s.handleSignals()
 
-	slog.Info("Accepting connections...")
+	slog.Info("Accepting connections", "address", s.listener.Addr().String())
 
 	for {
 		conn, err := s.listener.Accept()
@@ -106,9 +112,8 @@ func (s *Server) Run() error {
 			return err
 		}
 
-		slog.Info("Client connected...")
-
 		clientID := s.registry.Add(s.id, clientregistry.ClientState{Conn: conn})
+		slog.Info("Client connected", "client", clientID, "remote", conn.RemoteAddr().String())
 		go s.handleClientRequest(clientID, conn)
 	}
 
@@ -125,14 +130,15 @@ func (s *Server) Run() error {
 	s.resultQueue.Close()
 	s.abstractQueue.Close()
 	s.metadataQueue.Close()
+	slog.Info("Server stopped")
 	return nil
 }
 
 func (s *Server) handleSignals() {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
-	<-signals
-	slog.Info("SIGTERM signal received")
+	sig := <-signals
+	slog.Info("Shutting down", "signal", sig.String())
 	s.running.Store(false)
 	s.listener.Close()
 }
@@ -142,9 +148,7 @@ loop:
 	for {
 		msgType, err := external.ReadMsgType(conn)
 		if err != nil {
-			slog.Debug("While reading message type", "err", err)
-			s.registry.Remove(clientID)
-			conn.Close()
+			s.disconnectClient(clientID, conn, err)
 			return
 		}
 
@@ -152,37 +156,36 @@ loop:
 		case external.Article:
 			articles, err := external.ReadArticles[articleHandler.Article](conn)
 			if err != nil {
-				slog.Debug("While reading articles", "err", err)
-				s.registry.Remove(clientID)
-				conn.Close()
+				s.disconnectClient(clientID, conn, err)
 				return
 			}
 
 			for _, a := range articles {
 				if err := s.handler.HandleArticle(clientID, a); err != nil {
-					slog.Debug("While handling article", "err", err)
-					s.registry.Remove(clientID)
-					conn.Close()
+					s.disconnectClient(clientID, conn, err)
 					return
 				}
 			}
 
 		case external.EndOfFile:
 			if err := s.handler.HandleEOF(clientID); err != nil {
-				slog.Debug("While handling end of file", "err", err)
-				s.registry.Remove(clientID)
-				conn.Close()
+				s.disconnectClient(clientID, conn, err)
 				return
 			}
+			slog.Info("Client finished sending articles", "client", clientID)
 			break loop
 
 		default:
-			slog.Debug("Read unexpected message type")
-			s.registry.Remove(clientID)
-			conn.Close()
+			s.disconnectClient(clientID, conn, fmt.Errorf("unexpected message type %d", msgType))
 			return
 		}
 	}
+}
+
+func (s *Server) disconnectClient(clientID clientid.ID, conn net.Conn, err error) {
+	slog.Info("Client disconnected", "client", clientID, "err", err)
+	s.registry.Remove(clientID)
+	conn.Close()
 }
 
 func (s *Server) handleClientResponse(packet external.Packet[inner.QueryResult], ack func(), nack func()) {

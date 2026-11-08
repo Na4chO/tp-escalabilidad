@@ -44,7 +44,7 @@ system:
 	mkdir -p output
 	rm -rf output/client_run_*
 	COMPOSE_HTTP_TIMEOUT=300 docker compose up --build --remove-orphans --detach --wait
-	docker compose logs --follow
+	docker compose logs --follow server
 .PHONY: system
 
 VERIFY_CMD = docker build --quiet --tag tp-verify scripts/verify && \

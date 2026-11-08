@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/Na4chO/tp-escalabilidad/common/external"
 	"github.com/Na4chO/tp-escalabilidad/common/inner"
@@ -17,6 +19,7 @@ import (
 const queries = 5
 
 func receiveResults(conn io.Reader, outputPath string) error {
+	start := time.Now()
 	if err := os.MkdirAll(outputPath, 0o755); err != nil {
 		return err
 	}
@@ -34,10 +37,22 @@ func receiveResults(conn io.Reader, outputPath string) error {
 		writers[query] = writer
 	}
 
+	rowsByQuery := map[uint8]int{}
+	totalRows := 0
+
 	for {
 		msgType, err := external.ReadMsgType(conn)
 		if err != nil {
 			if errors.Is(err, io.ErrUnexpectedEOF) {
+				attrs := []any{
+					"output", outputPath,
+					"rows", totalRows,
+					"elapsed", time.Since(start).Round(time.Millisecond),
+				}
+				for query := uint8(1); query <= queries; query++ {
+					attrs = append(attrs, fmt.Sprintf("query%d", query), rowsByQuery[query])
+				}
+				slog.Info("Results written", attrs...)
 				return nil
 			}
 			return err
@@ -54,9 +69,12 @@ func receiveResults(conn io.Reader, outputPath string) error {
 		if !ok {
 			return fmt.Errorf("unexpected query type %d", result.QueryType)
 		}
-		if err := writer.WriteAll(rows(result)); err != nil {
+		resultRows := rows(result)
+		if err := writer.WriteAll(resultRows); err != nil {
 			return err
 		}
+		rowsByQuery[result.QueryType] += len(resultRows)
+		totalRows += len(resultRows)
 	}
 }
 
