@@ -45,7 +45,7 @@ def generate(args):
                 ["SERVER_HOST=0.0.0.0", "SERVER_PORT=5678", *node, "SERVER_ID=1"],
                 extra='\n    ports:\n      - "5678:5678"'
                       '\n    healthcheck:'
-                      '\n      test: ["CMD", "nc", "-z", "localhost", "5678"]'
+                      '\n      test: ["CMD-SHELL", "netstat -ltn | grep -q :5678"]'
                       '\n      interval: 2s'
                       '\n      timeout: 2s'
                       '\n      retries: 30'),

@@ -17,7 +17,7 @@ services:
     ports:
       - "5678:5678"
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "5678"]
+      test: ["CMD-SHELL", "netstat -ltn | grep -q :5678"]
       interval: 2s
       timeout: 2s
       retries: 30
