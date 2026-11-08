@@ -65,7 +65,7 @@ client:
 	@mkdir -p output/client_run_$(ID)
 	docker rm -f client_run_$(ID) >/dev/null 2>&1 || true
 	docker compose -f docker-compose.yaml -f docker-compose.clients.yaml build client_run
-	docker compose -f docker-compose.yaml -f docker-compose.clients.yaml run -d -T --no-deps --rm \
+	docker compose -f docker-compose.yaml -f docker-compose.clients.yaml run -T --no-deps --rm \
 		--name client_run_$(ID) \
 		-v "$(CURDIR)/data:/data:ro" \
 		-v "$(CURDIR)/output/client_run_$(ID):/output" \
