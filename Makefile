@@ -19,6 +19,7 @@ check:
 
 BATCH_SIZE ?= 100
 N ?= 3
+ID ?= 0
 METADATA_FILTER ?= 3
 ABSTRACT_PREPROCESSING ?= 3
 FREQUENCY_COLLECTOR ?= 3
@@ -41,18 +42,36 @@ up:
 
 system:
 	mkdir -p output
+	rm -rf output/client_run_*
 	COMPOSE_HTTP_TIMEOUT=300 docker compose up --build --remove-orphans --detach --wait
 .PHONY: system
 
-verify-image:
-	docker build --quiet --tag tp-verify scripts/verify
-.PHONY: verify-image
+VERIFY_CMD = docker build --quiet --tag tp-verify scripts/verify && \
+	docker run --rm -v "$(CURDIR)/data:/data:ro" -v "$(CURDIR)/output:/output" \
+		-e IMAGE_CACHE=/output/image_status.json \
+		tp-verify -clients $(N)
+
+verify:
+	mkdir -p output
+	$(VERIFY_CMD)
+.PHONY: verify
 
 clients:
 	scripts/run_clients.sh $(N)
 .PHONY: clients
 
-test: verify-image
+client:
+	@mkdir -p output/client_run_$(ID)
+	docker rm -f client_run_$(ID) >/dev/null 2>&1 || true
+	docker compose -f docker-compose.yaml -f docker-compose.clients.yaml build client_run
+	docker compose -f docker-compose.yaml -f docker-compose.clients.yaml run -d -T --no-deps --rm \
+		--name client_run_$(ID) \
+		-v "$(CURDIR)/data:/data:ro" \
+		-v "$(CURDIR)/output/client_run_$(ID):/output" \
+		client_run
+.PHONY: client
+
+test:
 	mkdir -p output
 	rm -rf output/client_run_*
 	@set +e; \
@@ -63,9 +82,7 @@ test: verify-image
 		exit 1; \
 	fi; \
 	WAIT=1 scripts/run_clients.sh $(N); clients=$$?; \
-	docker run --rm -v "$(CURDIR)/data:/data:ro" -v "$(CURDIR)/output:/output" \
-		-e IMAGE_CACHE=/output/image_status.json \
-		tp-verify -clients $(N); verify=$$?; \
+	$(VERIFY_CMD); verify=$$?; \
 	docker compose stop -t 5; \
 	docker compose down; \
 	if [ $$clients -eq 0 ]; then echo "Clients: OK"; else echo "Clients: FAIL"; fi; \
