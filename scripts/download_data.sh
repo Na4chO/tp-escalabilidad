@@ -18,7 +18,8 @@ url, fraction = sys.argv[1], float(sys.argv[2])
 files, token = [], ""
 while True:
     page = url + "?pageSize=200" + (f"&pageToken={token}" if token else "")
-    data = json.load(urllib.request.urlopen(page, timeout=60))
+    req = urllib.request.Request(page, headers={"User-Agent": "tp-escalabilidad/1.0"})
+    data = json.load(urllib.request.urlopen(req, timeout=60))
     files += [f["name"] for f in data["datasetFiles"] if f["name"].endswith(".parquet")]
     token = data.get("nextPageTokenNullable")
     if not token:
@@ -36,7 +37,9 @@ download() {
   if [ -f "$dest" ]; then
     return
   fi
-  curl -fsSL --retry 3 -o "$dest.tmp" "$API/download/$DATASET?fileName=$file"
+  curl -fsSL --retry 3 -A "tp-escalabilidad/1.0" -G \
+    --data-urlencode "fileName=$file" \
+    -o "$dest.tmp" "$API/download/$DATASET" || { rm -f "$dest.tmp"; return 1; }
   mv "$dest.tmp" "$dest"
   echo "Downloaded $(basename "$file")"
 }
@@ -46,7 +49,7 @@ export API DATASET DATA_DIR
 mkdir -p "$DATA_DIR"
 files="$(select_files)"
 echo "Downloading $(echo "$files" | wc -l | tr -d ' ') files ($FRACTION of the dataset) into data/"
-echo "$files" | xargs -P "$PARALLEL_DOWNLOADS" -I {} bash -c 'download "$1"' _ {}
+echo "$files" | xargs -P "$PARALLEL_DOWNLOADS" -I {} bash -c 'set -e; download "$1"' _ {}
 
 # The client sends every file in data/, so files outside the selection change the run
 extra="$(comm -13 <(echo "$files" | xargs -n1 basename | sort) <(ls "$DATA_DIR" | grep '\.parquet$' | sort) || true)"
