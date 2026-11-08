@@ -1,4 +1,4 @@
-package main
+package verify
 
 import (
 	"bufio"
@@ -15,7 +15,7 @@ import (
 
 const shownDiffs = 5
 
-func compare(expectedDir, actualDir string, queries []int) int {
+func Compare(expectedDir, actualDir string, queries []int) int {
 	failed := false
 	for _, query := range queries {
 		ok, err := compareQuery(expectedDir, actualDir, query)
@@ -84,7 +84,6 @@ func hasImage(encoded string) bool {
 	return err == nil && len(image) > 0
 }
 
-// compareRows compares as multisets, rows can arrive in any order
 func compareRows(expected, actual [][]string) (missing, extra [][]string) {
 	counts := map[string]int{}
 	for _, row := range expected {
@@ -108,7 +107,6 @@ func compareRows(expected, actual [][]string) (missing, extra [][]string) {
 	return missing, extra
 }
 
-// compareTop checks the counts, words tied at the last position can be any of them
 func compareTop(expected, actual [][]string) (missing, extra [][]string) {
 	expectedCounts, actualCounts := counts(expected), counts(actual)
 	if !slices.Equal(expectedCounts, actualCounts) || len(expectedCounts) == 0 {

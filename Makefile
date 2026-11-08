@@ -44,21 +44,15 @@ system:
 	COMPOSE_HTTP_TIMEOUT=300 docker compose up --build --remove-orphans --detach --wait
 .PHONY: system
 
-expected:
-	docker build --quiet --tag tp-expected scripts/expected
-	docker run --rm --entrypoint rm -v "$(CURDIR)/output:/output" tp-expected -rf /output/expected
-	mkdir -p output/expected
-	docker run --rm -v "$(CURDIR)/data:/data" -v "$(CURDIR)/output:/output" \
-		-e IMAGE_CACHE=/data/image_status.json \
-		tp-expected generate /data /output/expected
-	find data -maxdepth 1 -name '*.parquet' -printf '%f\n' | sort > output/expected/files.txt
-.PHONY: expected
+verify-image:
+	docker build --quiet --tag tp-verify scripts/verify
+.PHONY: verify-image
 
 clients:
 	scripts/run_clients.sh $(N)
 .PHONY: clients
 
-test: expected
+test: verify-image
 	mkdir -p output
 	rm -rf output/client_run_*
 	@set +e; \
@@ -69,9 +63,13 @@ test: expected
 		exit 1; \
 	fi; \
 	WAIT=1 scripts/run_clients.sh $(N); clients=$$?; \
-	go run ./scripts/verify_output.go -clients $(N); verify=$$?; \
+	docker run --rm -v "$(CURDIR)/data:/data:ro" -v "$(CURDIR)/output:/output" \
+		-e IMAGE_CACHE=/output/image_status.json \
+		tp-verify -clients $(N); verify=$$?; \
 	docker compose stop -t 5; \
 	docker compose down; \
+	if [ $$clients -eq 0 ]; then echo "Clients: OK"; else echo "Clients: FAIL"; fi; \
+	if [ $$verify -eq 0 ]; then echo "Verification: OK"; else echo "Verification: FAIL"; fi; \
 	[ $$clients -eq 0 ] && [ $$verify -eq 0 ]
 .PHONY: test
 

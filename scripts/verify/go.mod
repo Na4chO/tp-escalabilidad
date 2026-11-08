@@ -1,6 +1,6 @@
-module github.com/Na4chO/tp-escalabilidad/expected
+module github.com/Na4chO/tp-escalabilidad/verify
 
-go 1.24.9
+go 1.25.0
 
 require github.com/parquet-go/parquet-go v0.32.0
 
@@ -12,6 +12,6 @@ require (
 	github.com/parquet-go/jsonlite v1.0.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.21 // indirect
 	github.com/twpayne/go-geom v1.6.1 // indirect
-	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/sys v0.43.1-0.20260408233230-690c91f6ecf3 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
 )

@@ -4,11 +4,11 @@ WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
-COPY stopwords ./stopwords
-RUN CGO_ENABLED=0 GOOS=linux go build -o /expected .
+COPY verify ./verify
+RUN CGO_ENABLED=0 GOOS=linux go build -o /verify .
 
 FROM busybox:latest
 # CA certificates for the HTTPS requests to Wikimedia
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --from=builder /expected /expected
-ENTRYPOINT ["/expected"]
+COPY --from=builder /verify /verify
+ENTRYPOINT ["/verify"]

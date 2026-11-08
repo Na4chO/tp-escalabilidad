@@ -1,4 +1,4 @@
-package main
+package verify
 
 import (
 	"bufio"
@@ -69,7 +69,7 @@ type results struct {
 	oldCount   int
 }
 
-func generate(dataDir, outputDir string) error {
+func Generate(dataDir, outputDir string) error {
 	files, err := parquetFiles(dataDir)
 	if err != nil {
 		return err
